@@ -27,7 +27,7 @@ const (
 	systemPort     = 7078
 
 	waitTablesCount = 32
-	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/master/demo_page.json"
+	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/master/demo_apps.json"
 )
 
 var (
