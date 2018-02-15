@@ -8,8 +8,15 @@ import (
 func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	defer killProcesses()
 
+	fmt.Println("Check ports...")
+	err := checkPorts(nodesNumber)
+	if err != nil {
+		fmt.Println("Error: ", err)
+		return
+	}
+
 	fmt.Print("Trying to start centrifugo... ")
-	err := startCentrifugo()
+	err = startCentrifugo()
 	if err != nil {
 		fmt.Println("Error: ", err)
 		return

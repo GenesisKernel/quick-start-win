@@ -20,7 +20,7 @@ const (
 	dbNamePattern = "genesis%d"
 
 	centrifugoSecret = "secret"
-	centrifugoURL    = "http://localhost:8000"
+	centrifugoPort   = 8000
 
 	nodeLogLevel   = "INFO"
 	firstBlockFile = "1block"
@@ -28,25 +28,31 @@ const (
 
 	waitTablesCount = 32
 	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/master/demo_apps.json"
+	serveKeysPort   = 85
 )
 
 var (
-	executablePath    = ""
+	executablePath    string
+	centrifugoURL     string
 	centrifugoProcess *os.Process
 	nodeProcesses     []*os.Process
 	frontProcesses    []*os.Process
 )
 
-func main() {
-	defer stopNodes()
-	go waitSignal()
-
+func init() {
 	var err error
 	executablePath, err = filepath.Abs(filepath.Dir(os.Args[0]))
 	if err != nil {
 		fmt.Println("can't get current directory: ", err)
 		return
 	}
+
+	centrifugoURL = fmt.Sprintf("http://localhost:%d", centrifugoPort)
+}
+
+func main() {
+	defer stopNodes()
+	go waitSignal()
 
 	start := flag.Int("start", 0, `"start = X" starts new instances in quantity of X. Previous installation data will be deleted if exists.`)
 	stop := flag.Bool("stop", false, "stops current session without cleaning the data.")

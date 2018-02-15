@@ -16,6 +16,13 @@ func restartNodes() error {
 	}
 	nodesCount := len(files) - 2
 
+	fmt.Println("Check ports...")
+	err = checkPorts(nodesCount)
+	if err != nil {
+		fmt.Println("Error: ", err)
+		return err
+	}
+
 	server, err := startServingFiles(len(files) - 2)
 	if err != nil {
 		return err

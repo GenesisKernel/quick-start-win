@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,37 +22,29 @@ import (
 	"github.com/otiai10/copy"
 )
 
+const checkPortTimeout = time.Second
+
 var conn *sql.DB
 
 func installPostgres() error {
 	pgbinPath := executablePath + `\pgsql\bin\initdb.exe`
-	commandArgs := ` -D ` + executablePath + `\data\pgdata -U postgres -E UTF8 -A trust`
-	c := exec.Command("cmd", "/C "+pgbinPath+commandArgs)
+	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "-U", "postgres", "-A", "trust")
 	return c.Run()
 }
 
 func changePostgresPort(port int64) error {
-	conf, err := os.OpenFile(executablePath+`\data\pgdata\postgresql.conf`, os.O_RDWR, 0755)
+	pgConfPath := executablePath + `\data\pgdata\postgresql.conf`
+	bytes, err := ioutil.ReadFile(pgConfPath)
 	if err != nil {
 		return err
 	}
-
-	bytes, err := ioutil.ReadAll(conf)
-	if err != nil {
-		return err
-	}
-
 	newFile := strings.Replace(string(bytes), "#port = 5432", "port = "+strconv.FormatInt(port, 10), -1)
-
-	conf.Close()
-
-	return ioutil.WriteFile(executablePath+`\data\pgdata\postgresql.conf`, []byte(newFile), 0755)
+	return ioutil.WriteFile(pgConfPath, []byte(newFile), 0755)
 }
 
 func startPostgres() error {
 	pgbinPath := executablePath + `\pgsql\bin\pg_ctl.exe`
-	commandArgs := ` -D ` + executablePath + `\data\pgdata start`
-	c := exec.Command("cmd", "/C "+pgbinPath+commandArgs)
+	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "start")
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	c.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
@@ -83,9 +76,7 @@ func startPostgres() error {
 
 func stopPostgres() error {
 	pgbinPath := executablePath + `\pgsql\bin\pg_ctl.exe`
-	commandArgs := ` -D ` + executablePath + `\data\pgdata stop`
-	c := exec.Command("cmd", "/C "+pgbinPath+commandArgs)
-
+	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "stop")
 	return c.Run()
 }
 
@@ -433,7 +424,7 @@ func startFront(nodesCount int) error {
 
 		args := make([]string, 0)
 		args = append(args, "", fmt.Sprintf(`API_URL=%s`, apiURL),
-			fmt.Sprintf(`PRIVATE_KEY=http://localhost:85/%d`, i))
+			fmt.Sprintf(`PRIVATE_KEY=http://localhost:%d/%d`, serveKeysPort, i))
 
 		procAttr := new(os.ProcAttr)
 		procAttr.Files = []*os.File{logFile, logFile, logFile}
@@ -460,7 +451,7 @@ func startServingFiles(nodesCount int) (*http.Server, error) {
 	keysDir := executablePath + `\data\keys\`
 	nodeKeyPath := executablePath + `\data\%d\back\PrivateKey`
 
-	server := &http.Server{Addr: "localhost:85"}
+	server := &http.Server{Addr: "localhost:" + strconv.Itoa(serveKeysPort)}
 
 	for i := 1; i < nodesCount+1; i++ {
 		err := copy.Copy(fmt.Sprintf(nodeKeyPath, i), keysDir+fmt.Sprintf("%d", i))
@@ -1149,4 +1140,39 @@ func waitSignal() {
 		stopNodes()
 		os.Exit(0)
 	}
+}
+
+func checkPorts(nodesNumber int) error {
+	ports := []int{dbPort, centrifugoPort, serveKeysPort}
+	for i := 1; i <= nodesNumber; i++ {
+		port := systemPort + (i-1)*2
+		ports = append(ports, port, port+1)
+	}
+
+	var isBusy bool
+	for _, port := range ports {
+		fmt.Printf("Check port %d... ", port)
+
+		if isFreePort(port) {
+			fmt.Println("OK")
+			continue
+		}
+
+		fmt.Println("Busy")
+		isBusy = true
+	}
+
+	if isBusy {
+		return fmt.Errorf("First, free the busy ports")
+	}
+	return nil
+}
+
+func isFreePort(port int) bool {
+	conn, err := net.DialTimeout("tcp", ":"+strconv.Itoa(port), checkPortTimeout)
+	if err != nil {
+		return true
+	}
+	defer conn.Close()
+	return false
 }

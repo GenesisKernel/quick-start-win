@@ -6,4 +6,4 @@ centrifugo
 front
 pgsql
 data
-win_install.exe
+win_install*
