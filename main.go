@@ -29,6 +29,8 @@ const (
 	waitTablesCount = 32
 	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/master/demo_apps.json"
 	serveKeysPort   = 85
+
+	walletBalance = 100
 )
 
 var (

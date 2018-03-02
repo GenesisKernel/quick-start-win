@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -681,8 +682,8 @@ func updateKeys(nodesCount int) error {
 		jvtToken := "Bearer " + loginResult.Token
 
 		contName := "con_updatekeys" + strconv.FormatInt(int64(i), 10)
-		code := `{data {}conditions {} action {$result=DBInsert("keys", "id,pub,amount", "` + keyID + `", "` + pubKey + `", "100") }}`
-		updateKeysCode := "contract " + contName + code
+		balance := walletBalance * math.Pow(10, 18)
+		updateKeysCode := fmt.Sprintf(`contract %s {data {}conditions {} action {$result=DBInsert("keys", "id,pub,amount", "%s", "%s", "%.0f") }}`, contName, keyID, pubKey, balance)
 		values = &url.Values{"Wallet": {""}, "Value": {updateKeysCode}, "Conditions": {`"ContractConditions(` + "`MainCondition`" + `)"`}}
 
 		res, err = sendRequest("POST", baseURL+"/prepare/NewContract", values, jvtToken)
