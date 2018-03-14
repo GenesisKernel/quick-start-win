@@ -8,14 +8,14 @@ import (
 func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	defer killProcesses()
 
-	fmt.Println("Check ports...")
+	fmt.Println("Checking ports for availability")
 	err := checkPorts(nodesNumber)
 	if err != nil {
 		fmt.Println("Error: ", err)
 		return
 	}
 
-	fmt.Print("Trying to start centrifugo... ")
+	fmt.Print("Starting centrifugo... ")
 	err = startCentrifugo()
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -27,7 +27,7 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 		time.Sleep(time.Minute * 2)
 	}
 
-	fmt.Print("Trying to install local copy of postgres... ")
+	fmt.Print("Installing a local copy of postgres... ")
 	err = installPostgres()
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -47,7 +47,7 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	}
 	fmt.Println("OK")
 
-	fmt.Println("Trying to connect postgres")
+	fmt.Println("Connecting to postgres database")
 	err = startPostgres()
 	if err != nil {
 		fmt.Println(err)
@@ -92,7 +92,7 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	if slowInstall {
 		time.Sleep(time.Minute * 2)
 	}
-	fmt.Print("Trying to update full_nodes... ")
+	fmt.Print("Updating the full_nodes parameter... ")
 	err = updateFullNodes(nodesNumber)
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -102,7 +102,7 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	if slowInstall {
 		time.Sleep(time.Minute * 2)
 	}
-	fmt.Print("Trying to update keys...")
+	fmt.Print("Updating keys...")
 	err = updateKeys(nodesNumber)
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -113,7 +113,7 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	if slowInstall {
 		time.Sleep(time.Minute * 2)
 	}
-	fmt.Print("Trying to install demo_page application... ")
+	fmt.Print("Installing demo applications... ")
 	err = installDemoPage()
 	if err != nil {
 		fmt.Println("Error: ", err)

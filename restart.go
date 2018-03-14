@@ -12,11 +12,11 @@ func restartNodes() error {
 
 	files, err := ioutil.ReadDir(executablePath + `\data`)
 	if err != nil {
-		return fmt.Errorf("can't find data dir")
+		return fmt.Errorf("Data directory not found")
 	}
 	nodesCount := len(files) - 2
 
-	fmt.Println("Check ports...")
+	fmt.Println("Checking ports for availability...")
 	err = checkPorts(nodesCount)
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -29,7 +29,7 @@ func restartNodes() error {
 	}
 	defer server.Close()
 
-	fmt.Print("Trying to start centrifugo... ")
+	fmt.Print("Starting centrifugo... ")
 	err = startCentrifugo()
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -37,7 +37,7 @@ func restartNodes() error {
 	}
 	fmt.Println("OK")
 
-	fmt.Println("Trying to start postgres... ")
+	fmt.Println("Starting postgres... ")
 	err = startPostgres()
 	if err != nil {
 		fmt.Printf("Can't start postgres. Error: %s", err)

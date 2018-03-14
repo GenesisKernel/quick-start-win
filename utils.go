@@ -55,16 +55,16 @@ func startPostgres() error {
 	}
 	time.Sleep(time.Second)
 	for i := 1; i < 6; i++ {
-		fmt.Print(fmt.Sprintf("%d attempt... ", i))
+		fmt.Print(fmt.Sprintf("Conducting attempt #%d... ", i))
 		conn, err = sql.Open("postgres", `host=localhost port=5430 user=postgres dbname=postgres sslmode=disable password=postgres"`)
 		if err != nil {
-			fmt.Println("Fail. Wait 5 seconds before next attempt.")
+			fmt.Println("Attempt failed. Next attempt in 5 seconds.")
 			time.Sleep(time.Second * 5)
 			continue
 		}
 		err = conn.Ping()
 		if err != nil {
-			fmt.Println("Fail. Wait 5 seconds before next attempt.")
+			fmt.Println("Attempt failed. Next attempt in 5 seconds.")
 			time.Sleep(time.Second * 5)
 			continue
 		} else {
@@ -72,7 +72,7 @@ func startPostgres() error {
 			return nil
 		}
 	}
-	return fmt.Errorf("Can't connect to database")
+	return fmt.Errorf("Can't connect to the database")
 }
 
 func stopPostgres() error {
@@ -88,7 +88,7 @@ func getDBName(number int) string {
 func createDatabases(nodesCount int) error {
 	conn, err := sql.Open("postgres", `host=localhost port=5430 user=postgres dbname=postgres sslmode=disable password=postgres"`)
 	if err != nil {
-		return fmt.Errorf("Can't connect database. Error: %s", err)
+		return fmt.Errorf("Can't connect to the database. Error: %s", err)
 	}
 
 	for i := 1; i <= nodesCount; i++ {
@@ -106,7 +106,7 @@ func createDatabases(nodesCount int) error {
 
 func makeDirs(nodesCount int) error {
 	for i := 1; i < nodesCount+1; i++ {
-		fmt.Print(fmt.Sprintf("Trying to create directory %d... ", i))
+		fmt.Print(fmt.Sprintf("Creating directory %d... ", i))
 		path := executablePath + `\data\` + strconv.FormatInt(int64(i), 10)
 		exists, err := dirExists(path)
 		if err != nil {
@@ -123,41 +123,41 @@ func makeDirs(nodesCount int) error {
 
 			if !empty {
 				fmt.Println("Error: ", err)
-				return fmt.Errorf("dir %s is not empty", path)
+				return fmt.Errorf("Directory %s is not empty", path)
 			}
 		} else {
 			err := os.Mkdir(path, 0755)
 			if err != nil {
 				fmt.Println("Error: ", err)
-				return fmt.Errorf("can't create directory %s. Error: %s", path, err)
+				return fmt.Errorf("Can't create directory %s. Error: %s", path, err)
 			}
 		}
 		fmt.Println("OK")
 	}
-	fmt.Print("Trying to create keys directory... ")
+	fmt.Print("Creating keys directory... ")
 	path := executablePath + `\data\keys`
 	exists, err := dirExists(path)
 	if err != nil {
 		fmt.Println("Error: ", err)
-		return fmt.Errorf("dir %s can't be accessed", path)
+		return fmt.Errorf("Dir %s can't be accessed", path)
 	}
 
 	if exists {
 		empty, err := dirEmpty(path)
 		if err != nil {
 			fmt.Println("Error: ", err)
-			return fmt.Errorf("dir %s can't be accessed", path)
+			return fmt.Errorf("Dir %s can't be accessed", path)
 		}
 
 		if !empty {
 			fmt.Println("Error: ", err)
-			return fmt.Errorf("dir %s is not empty", path)
+			return fmt.Errorf("Directory %s is not empty", path)
 		}
 	} else {
 		err := os.Mkdir(path, 0755)
 		if err != nil {
 			fmt.Println("Error: ", err)
-			return fmt.Errorf("can't create directory %s. Error: %s", path, err)
+			return fmt.Errorf("Can't create directory %s. Error: %s", path, err)
 		}
 	}
 	fmt.Println("OK")
@@ -166,18 +166,18 @@ func makeDirs(nodesCount int) error {
 
 func copyNodes(nodesCount int) error {
 	for i := 1; i < nodesCount+1; i++ {
-		fmt.Print(fmt.Sprintf("Copy %d node binaries... ", i))
+		fmt.Print(fmt.Sprintf("Copying binary files for node #%d... ", i))
 		path := executablePath + `\data\` + strconv.FormatInt(int64(i), 10)
 		err := copy.Copy(executablePath+`\front`, path+`\front`)
 		if err != nil {
 			fmt.Println("Error: ", err)
-			return fmt.Errorf("can't copy frontend to %d node", i)
+			return fmt.Errorf("Copying frontend to node #%d failed", i)
 		}
 
 		err = copy.Copy(executablePath+`\back`, path+`\back`)
 		if err != nil {
 			fmt.Println("Error: ", err)
-			return fmt.Errorf("can't copy backend to %d node", i)
+			return fmt.Errorf("Copying backend to node #%d failed", i)
 		}
 		fmt.Println("OK")
 	}
@@ -291,7 +291,7 @@ func initNodes(nodesCount int) error {
 	firstNodePath := getNodePath(1)
 	firstBlockPath := firstNodePath + firstBlockFile
 
-	fmt.Print("Trying to start 1 node... ")
+	fmt.Print("Starting node #1... ")
 	err := startNode(&nodeArgs{
 		workDir:            firstNodePath,
 		initConfig:         true,
@@ -314,7 +314,7 @@ func initNodes(nodesCount int) error {
 	fmt.Println("OK")
 
 	for i := 2; i <= nodesCount; i++ {
-		fmt.Print(fmt.Sprintf("Trying to init %d node... ", i))
+		fmt.Print(fmt.Sprintf("Initializing node #%d... ", i))
 		port := systemPort + (i-1)*2
 		err := startNode(&nodeArgs{
 			workDir:            getNodePath(i),
@@ -345,7 +345,7 @@ func startExistingNodes(offsetNode, nodesCount int, isInit bool) error {
 	firstBlockPath := getNodePath(1) + firstBlockFile
 
 	for i := offsetNode; i <= nodesCount; i++ {
-		fmt.Print(fmt.Sprintf("Trying to start %d node... ", i))
+		fmt.Print(fmt.Sprintf("Starting node #%d... ", i))
 
 		port := systemPort + (i-1)*2
 
@@ -394,7 +394,7 @@ func startExistingNodes(offsetNode, nodesCount int, isInit bool) error {
 
 func startFront(nodesCount int) error {
 	for i := 1; i <= nodesCount; i++ {
-		fmt.Printf("Trying to start %d fronted... ", i)
+		fmt.Printf("Starting fronted on node #%d... ", i)
 
 		frontDirPath := fmt.Sprintf(`%s\data\%d\front\`, executablePath, i)
 		frontExePath := frontDirPath + binaryFrontName
@@ -413,7 +413,7 @@ func startFront(nodesCount int) error {
 			}
 		}
 		if !started {
-			fmt.Println(fmt.Sprintf("It seems like %d node stopped. Check log file for more information.", i))
+			fmt.Println(fmt.Sprintf("Node #%d seems to have stopped. Please check log file for more information.", i))
 			continue
 		}
 
@@ -485,14 +485,14 @@ func updateFullNodes(nodesCount int) error {
 		}
 		bytes, err := ioutil.ReadAll(pKey)
 		if err != nil {
-			return fmt.Errorf("can't read node private key. Error: %s", err)
+			return fmt.Errorf("Can't read the node's private key. Error: %e", err)
 		}
 		privateKey = string(bytes)
 		pKey.Close()
 		break
 	}
 	if privateKey == "" {
-		return fmt.Errorf("can't open node private key")
+		return fmt.Errorf("Can't open the node's private key")
 	}
 	newVals := ""
 	for i := 1; i <= nodesCount; i++ {
@@ -513,7 +513,7 @@ func updateFullNodes(nodesCount int) error {
 	var getUIDResult getUIDResult
 	err = json.Unmarshal(res, &getUIDResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first getuid result")
+		return fmt.Errorf("Can't parse first getuid result")
 	}
 
 	values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
@@ -525,7 +525,7 @@ func updateFullNodes(nodesCount int) error {
 	var signTestResult signTestResult
 	err = json.Unmarshal(res, &signTestResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first signTest result")
+		return fmt.Errorf("Can't parse first signTest result")
 	}
 
 	fullToken := "Bearer " + getUIDResult.Token
@@ -538,7 +538,7 @@ func updateFullNodes(nodesCount int) error {
 	var loginResult loginResult
 	err = json.Unmarshal(res, &loginResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first login result")
+		return fmt.Errorf("Can't parse first login result")
 	}
 	jvtToken := "Bearer " + loginResult.Token
 
@@ -550,7 +550,7 @@ func updateFullNodes(nodesCount int) error {
 	var prepareResult prepareResult
 	err = json.Unmarshal(res, &prepareResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first prepare result")
+		return fmt.Errorf("Can't parse first prepare result")
 	}
 
 	values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
@@ -561,7 +561,7 @@ func updateFullNodes(nodesCount int) error {
 
 	err = json.Unmarshal(res, &signTestResult)
 	if err != nil {
-		return fmt.Errorf("can't parse second signTest result")
+		return fmt.Errorf("Can't parse second signTest result")
 	}
 
 	values = &url.Values{"Name": {"full_nodes"}, "Value": {newVals}, "time": {prepareResult.Time}, "signature": {signTestResult.Signature}}
@@ -574,7 +574,7 @@ func updateFullNodes(nodesCount int) error {
 
 	err = json.Unmarshal(res, &contractResult)
 	if err != nil {
-		return fmt.Errorf("can't parse contract result")
+		return fmt.Errorf("Can't parse contract result")
 	}
 
 	var txstatusResult txstatusResult
@@ -587,7 +587,7 @@ func updateFullNodes(nodesCount int) error {
 		err = json.Unmarshal(res, &txstatusResult)
 		if err != nil {
 			fmt.Println("txStatus: ", txstatusResult)
-			return fmt.Errorf("can't parse txstatus result")
+			return fmt.Errorf("Can't parse txstatus result")
 		}
 		if txstatusResult.BlockID == "" {
 			time.Sleep(time.Second * 5)
@@ -597,11 +597,11 @@ func updateFullNodes(nodesCount int) error {
 	}
 
 	if txstatusResult.BlockID == "" {
-		return fmt.Errorf("timeout error")
+		return fmt.Errorf("Operation timeout error")
 	}
 
 	if txstatusResult.BlockID == "0" {
-		return fmt.Errorf("can't update system parameters")
+		return fmt.Errorf("Can't update Genesis system parameters")
 	}
 	fmt.Println("OK")
 	return nil
@@ -612,35 +612,35 @@ func updateKeys(nodesCount int) error {
 
 	pKey, err := os.OpenFile(executablePath+`\data\1\back\PrivateKey`, os.O_RDONLY, 0755)
 	if err != nil {
-		return fmt.Errorf("can't open node private key. Error: %s", err)
+		return fmt.Errorf("Can't open the node's private key. Error: %s", err)
 	}
 	defer pKey.Close()
 	bytes, err := ioutil.ReadAll(pKey)
 	if err != nil {
-		return fmt.Errorf("can't read  node private key. Error: %s", err)
+		return fmt.Errorf("Can't read the node's private key. Error: %e", err)
 	}
 	privateKey := string(bytes)
 
 	for i := 2; i < nodesCount+1; i++ {
 		kID, err := os.OpenFile(executablePath+fmt.Sprintf(`\data\%d\back\KeyID`, i), os.O_RDONLY, 0755)
 		if err != nil {
-			return fmt.Errorf("can't open node private key. Error: %s", err)
+			return fmt.Errorf("Can't open the node's keyID. Error: %s", err)
 		}
 		defer kID.Close()
 		bytes, err := ioutil.ReadAll(kID)
 		if err != nil {
-			return fmt.Errorf("can't read  node private key. Error: %s", err)
+			return fmt.Errorf("Can't read the node's keyID. Error: %s", err)
 		}
 		keyID := string(bytes)
 
 		pub, err := os.OpenFile(executablePath+fmt.Sprintf(`\data\%d\back\PublicKey`, i), os.O_RDONLY, 0755)
 		if err != nil {
-			return fmt.Errorf("can't open node private key. Error: %s", err)
+			return fmt.Errorf("Can't open the node's public key. Error: %s", err)
 		}
 		defer pub.Close()
 		bytes, err = ioutil.ReadAll(pub)
 		if err != nil {
-			return fmt.Errorf("can't read  node private key. Error: %s", err)
+			return fmt.Errorf("Can't read the node's public key. Error: %s", err)
 		}
 		pubKey := string(bytes)
 
@@ -651,7 +651,7 @@ func updateKeys(nodesCount int) error {
 		var getUIDResult getUIDResult
 		err = json.Unmarshal(res, &getUIDResult)
 		if err != nil {
-			return fmt.Errorf("can't parse getuid result")
+			return fmt.Errorf("Can't parse first getuid result")
 		}
 
 		values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
@@ -663,7 +663,7 @@ func updateKeys(nodesCount int) error {
 		var signTestResult signTestResult
 		err = json.Unmarshal(res, &signTestResult)
 		if err != nil {
-			return fmt.Errorf("can't parse first signTest result")
+			return fmt.Errorf("Can't parse first signTest result")
 		}
 
 		fullToken := "Bearer " + getUIDResult.Token
@@ -676,7 +676,7 @@ func updateKeys(nodesCount int) error {
 		var loginResult loginResult
 		err = json.Unmarshal(res, &loginResult)
 		if err != nil {
-			return fmt.Errorf("can't parse login result")
+			return fmt.Errorf("Can't parse first login result")
 		}
 
 		jvtToken := "Bearer " + loginResult.Token
@@ -693,7 +693,7 @@ func updateKeys(nodesCount int) error {
 		var prepareResult prepareResult
 		err = json.Unmarshal(res, &prepareResult)
 		if err != nil {
-			return fmt.Errorf("can't parse first prepare result")
+			return fmt.Errorf("Can't parse first prepare result")
 		}
 
 		values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
@@ -704,7 +704,7 @@ func updateKeys(nodesCount int) error {
 
 		err = json.Unmarshal(res, &signTestResult)
 		if err != nil {
-			return fmt.Errorf("can't parse first signTest result")
+			return fmt.Errorf("Can't parse first signTest result")
 		}
 
 		values = &url.Values{"Wallet": {""}, "Value": {updateKeysCode}, "Conditions": {`"ContractConditions(` + "`MainCondition`" + `)"`}, "time": {prepareResult.Time}, "signature": {signTestResult.Signature}}
@@ -716,7 +716,7 @@ func updateKeys(nodesCount int) error {
 		var contractResult contractResult
 		err = json.Unmarshal(res, &contractResult)
 		if err != nil {
-			return fmt.Errorf("can't parse first contract result")
+			return fmt.Errorf("Can't parse contract result")
 		}
 
 		var txstatusResult txstatusResult
@@ -728,7 +728,7 @@ func updateKeys(nodesCount int) error {
 
 			err = json.Unmarshal(res, &txstatusResult)
 			if err != nil {
-				return fmt.Errorf("can't parse txstatus result")
+				return fmt.Errorf("Can't parse txstatus result")
 			}
 			if txstatusResult.BlockID == "" {
 				time.Sleep(time.Second * 5)
@@ -737,11 +737,11 @@ func updateKeys(nodesCount int) error {
 			}
 		}
 		if txstatusResult.BlockID == "" {
-			return fmt.Errorf("timeout 1 error")
+			return fmt.Errorf("Operation timeout error")
 		}
 
 		if txstatusResult.BlockID == "0" {
-			return fmt.Errorf("update keys request failed")
+			return fmt.Errorf("Keys update request failed")
 		}
 
 		values = &url.Values{}
@@ -763,7 +763,7 @@ func updateKeys(nodesCount int) error {
 
 		err = json.Unmarshal(res, &signTestResult)
 		if err != nil {
-			return fmt.Errorf("can't parse second signTest result")
+			return fmt.Errorf("Can't parse second prepare result")
 		}
 
 		values = &url.Values{"time": {prepareResult.Time}, "signature": {signTestResult.Signature}}
@@ -774,7 +774,7 @@ func updateKeys(nodesCount int) error {
 
 		err = json.Unmarshal(res, &contractResult)
 		if err != nil {
-			return fmt.Errorf("can't parse second contract result")
+			return fmt.Errorf("Can't parse second contract result")
 		}
 
 		for i := 0; i < 10; i++ {
@@ -785,7 +785,7 @@ func updateKeys(nodesCount int) error {
 
 			err = json.Unmarshal(res, &txstatusResult)
 			if err != nil {
-				return fmt.Errorf("can't parse txstatus result")
+				return fmt.Errorf("Can't parse txstatus result")
 			}
 			if txstatusResult.BlockID == "" {
 				time.Sleep(time.Second * 5)
@@ -795,11 +795,11 @@ func updateKeys(nodesCount int) error {
 		}
 
 		if txstatusResult.BlockID == "" {
-			return fmt.Errorf("timeout 2 error")
+			return fmt.Errorf("Operation timeout error")
 		}
 
 		if txstatusResult.BlockID == "0" {
-			return fmt.Errorf("update keys contract failed")
+			return fmt.Errorf("Keys update contract failed")
 		}
 
 	}
@@ -816,7 +816,7 @@ func sendRequest(method string, url string, payload *url.Values, auth string) ([
 
 	req, err := http.NewRequest(method, url, ioform)
 	if err != nil {
-		return nil, fmt.Errorf("can't create request")
+		return nil, fmt.Errorf("Can't create request")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	if auth != "" {
@@ -824,13 +824,13 @@ func sendRequest(method string, url string, payload *url.Values, auth string) ([
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("can't exec request ")
+		return nil, fmt.Errorf("Can't execute request ")
 	}
 
 	defer resp.Body.Close()
 	bytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("can't read request")
+		return nil, fmt.Errorf("Can't read response")
 	}
 	return bytes, nil
 }
@@ -847,7 +847,7 @@ func getFullNodeValue(nodeNumber int) (nodeValue, error) {
 		defer kID.Close()
 		bytes, err := ioutil.ReadAll(kID)
 		if err != nil {
-			return nodeValue{}, fmt.Errorf("can't read  node keyID. Error: %s", err)
+			return nodeValue{}, fmt.Errorf("Can't read node's KeyID. Error: %s", err)
 		}
 		keyID = string(bytes)
 		break
@@ -862,17 +862,17 @@ func getFullNodeValue(nodeNumber int) (nodeValue, error) {
 		defer publicKeyFile.Close()
 		publicBytes, err := ioutil.ReadAll(publicKeyFile)
 		if err != nil {
-			return nodeValue{}, fmt.Errorf("can't read  node public key. Error: %s", err)
+			return nodeValue{}, fmt.Errorf("Can't read node's public key. Error: %s", err)
 		}
 		publicKey = string(publicBytes)
 		break
 	}
 
 	if keyID == "" {
-		return nodeValue{}, fmt.Errorf("can't open node %d KeyID", nodeNumber)
+		return nodeValue{}, fmt.Errorf("Can't open node's %d KeyID", nodeNumber)
 	}
 	if publicKey == "" {
-		return nodeValue{}, fmt.Errorf("can't open node %d NodePublicKey", nodeNumber)
+		return nodeValue{}, fmt.Errorf("Can't open node's %d NodePublicKey", nodeNumber)
 	}
 
 	if nodeNumber == 1 {
@@ -911,7 +911,7 @@ func startCentrifugo() error {
 func waitDBstatus(number int) error {
 	conn, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=disable password=%s", dbHost, dbPort, dbUser, getDBName(number), dbPassword))
 	if err != nil {
-		return fmt.Errorf("Can't connect to db. Error: %s", err)
+		return fmt.Errorf("Can't connect to DB. Error: %s", err)
 	}
 	defer conn.Close()
 
@@ -919,7 +919,7 @@ func waitDBstatus(number int) error {
 	for i := 0; i < 15; i++ {
 		rows, err := conn.Query(`select count(*) from information_schema.tables where table_schema='public';`)
 		if err != nil {
-			return fmt.Errorf("Can't get tables count. Error: %s", err)
+			return fmt.Errorf("Tables count failed. Error: %s", err)
 		}
 		for rows.Next() {
 			rows.Scan(&tablesCount)
@@ -933,7 +933,7 @@ func waitDBstatus(number int) error {
 		}
 	}
 
-	return fmt.Errorf("Only %d tables of %d created", tablesCount, waitTablesCount)
+	return fmt.Errorf("Only %d of %d tables created", tablesCount, waitTablesCount)
 }
 
 func downloadFile(url string) ([]byte, error) {
@@ -954,7 +954,7 @@ func downloadFile(url string) ([]byte, error) {
 func installDemoPage() error {
 	data, err := downloadFile(demoPageURL)
 	if err != nil {
-		return fmt.Errorf("Can't download demo_page application. Error: %s", err)
+		return fmt.Errorf("Demo applications download failed. Error: %s", err)
 	}
 
 	err = postTx("@1Import", &url.Values{"Data": {string(data)}})
@@ -981,14 +981,14 @@ func postTx(contract string, form *url.Values) error {
 		}
 		bytes, err := ioutil.ReadAll(pKey)
 		if err != nil {
-			return fmt.Errorf("can't read node private key. Error: %s", err)
+			return fmt.Errorf("Can't read the node's private key. Error: %s", err)
 		}
 		privateKey = string(bytes)
 		pKey.Close()
 		break
 	}
 	if privateKey == "" {
-		return fmt.Errorf("can't open node private key")
+		return fmt.Errorf("Can't open the node's private key")
 	}
 
 	baseURL := "http://localhost:7079/api/v2"
@@ -1000,7 +1000,7 @@ func postTx(contract string, form *url.Values) error {
 	var getUIDResult getUIDResult
 	err = json.Unmarshal(res, &getUIDResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first getuid result")
+		return fmt.Errorf("Can't parse getuid result")
 	}
 
 	values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
@@ -1012,7 +1012,7 @@ func postTx(contract string, form *url.Values) error {
 	var signTestResult signTestResult
 	err = json.Unmarshal(res, &signTestResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first signTest result")
+		return fmt.Errorf("Can't parse first signTest result")
 	}
 
 	fullToken := "Bearer " + getUIDResult.Token
@@ -1025,7 +1025,7 @@ func postTx(contract string, form *url.Values) error {
 	var loginResult loginResult
 	err = json.Unmarshal(res, &loginResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first login result")
+		return fmt.Errorf("Can't parse login result")
 	}
 	jvtToken := "Bearer " + loginResult.Token
 
@@ -1036,7 +1036,7 @@ func postTx(contract string, form *url.Values) error {
 	var prepareResult prepareResult
 	err = json.Unmarshal(res, &prepareResult)
 	if err != nil {
-		return fmt.Errorf("can't parse first prepare result")
+		return fmt.Errorf("Can't parse prepare result")
 	}
 
 	values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
@@ -1047,7 +1047,7 @@ func postTx(contract string, form *url.Values) error {
 
 	err = json.Unmarshal(res, &signTestResult)
 	if err != nil {
-		return fmt.Errorf("can't parse second signTest result")
+		return fmt.Errorf("Can't parse second signTest result")
 	}
 
 	(*form)["time"] = []string{prepareResult.Time}
@@ -1061,7 +1061,7 @@ func postTx(contract string, form *url.Values) error {
 
 	err = json.Unmarshal(res, &contractResult)
 	if err != nil {
-		return fmt.Errorf("can't parse contract result")
+		return fmt.Errorf("Can't parse contract result")
 	}
 
 	var txstatusResult txstatusResult
@@ -1074,7 +1074,7 @@ func postTx(contract string, form *url.Values) error {
 		err = json.Unmarshal(res, &txstatusResult)
 		if err != nil {
 			fmt.Println("txStatus: ", txstatusResult)
-			return fmt.Errorf("can't parse txstatus result")
+			return fmt.Errorf("Can't parse txstatus result")
 		}
 
 		if len(txstatusResult.BlockID) > 0 {
@@ -1085,11 +1085,11 @@ func postTx(contract string, form *url.Values) error {
 	}
 
 	if txstatusResult.BlockID == "" {
-		return fmt.Errorf("timeout error")
+		return fmt.Errorf("Operation timeout error")
 	}
 
 	if txstatusResult.BlockID == "0" {
-		return fmt.Errorf("can't update system parameters")
+		return fmt.Errorf("Can't execute request")
 	}
 
 	return nil
@@ -1109,7 +1109,7 @@ func killProcesses() {
 
 func waitClose() {
 	fmt.Println()
-	fmt.Println(`All nodes started. Print "s" to stop services without cleaning the data.`)
+	fmt.Println(`All nodes started. Type "s" to stop the services without clearing the data.`)
 
 	isScan := true
 	go func() {
@@ -1152,7 +1152,7 @@ func checkPorts(nodesNumber int) error {
 
 	var isBusy bool
 	for _, port := range ports {
-		fmt.Printf("Check port %d... ", port)
+		fmt.Printf("Checking port %d... ", port)
 
 		if isFreePort(port) {
 			fmt.Println("OK")
@@ -1164,7 +1164,7 @@ func checkPorts(nodesNumber int) error {
 	}
 
 	if isBusy {
-		return fmt.Errorf("First, free the busy ports")
+		return fmt.Errorf("Please free the used ports")
 	}
 	return nil
 }

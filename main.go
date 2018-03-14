@@ -45,7 +45,7 @@ func init() {
 	var err error
 	executablePath, err = filepath.Abs(filepath.Dir(os.Args[0]))
 	if err != nil {
-		fmt.Println("can't get current directory: ", err)
+		fmt.Println("Can't find the current directory: ", err)
 		return
 	}
 
@@ -56,18 +56,18 @@ func main() {
 	defer stopNodes()
 	go waitSignal()
 
-	start := flag.Int("start", 0, `"start = X" starts new instances in quantity of X. Previous installation data will be deleted if exists.`)
-	stop := flag.Bool("stop", false, "stops current session without cleaning the data.")
-	restart := flag.Bool("restart", false, "restarts previous installation.")
-	clear := flag.Bool("clean", false, "removes all of the nodes and database.")
-	slowInstall := flag.Bool("slow", false, "slower installation for non top machines.")
+	start := flag.Int("start", 0, `The "start = X" command launches X number of nodes. Previous installation data will be deleted.`)
+	stop := flag.Bool("stop", false, "Stops the current session without clearing the data.")
+	restart := flag.Bool("restart", false, "Restarts the previous installation attempt.")
+	clear := flag.Bool("clean", false, "Removes all nodes and databases.")
+	slowInstall := flag.Bool("slow", false, "Slow installation for older computers.")
 	flag.Parse()
 
 	if (*start != 0 && (*stop || *restart || *clear)) ||
 		(*stop && (*start != 0 || *restart || *clear)) ||
 		(*restart && (*start != 0 || *stop || *clear)) ||
 		(*clear && (*start != 0 || *stop || *restart)) {
-		fmt.Println("Only one command can be used at one time.")
+		fmt.Println("Only one command can be used at a time.")
 		return
 	}
 
@@ -92,12 +92,12 @@ func main() {
 	}
 
 	for {
-		fmt.Println(`1. print "i" to do new installation
-2. print "c" to remove all of the nodes and database
-3. print "r" to restart previous installation
-4. print "s" to stop services without cleaning the data
-5. print "si" to slow install in case of errors during common install
-6. print "q" for exit.`)
+		fmt.Println(`1. Type "i" to perform a new installation 
+2. Type "c" to remove all nodes and databases 
+3. Type "r" to restart the previous installation 
+4. Type "s" to stop the services without clearing the data 
+5. Type "si" to run a slow installation in case of errors during the normal install 
+6. Type "q" to exit.`)
 		fmt.Print("> ")
 		var action string
 		_, err := fmt.Scanf("%s \n", &action)
@@ -107,7 +107,7 @@ func main() {
 			switch action {
 			case "i":
 				var nodesNumber int
-				fmt.Println("print number of nodes to install. For example 3")
+				fmt.Println("How many nodes do you want to install? Example: 3")
 				fmt.Print("> ")
 				_, err := fmt.Scanf("%d \n", &nodesNumber)
 				if err != nil {
@@ -123,7 +123,7 @@ func main() {
 				stopNodes()
 			case "si":
 				var nodesNumber int
-				fmt.Println("print number of nodes to install. For example 3")
+				fmt.Println("How many nodes do you want to install? Example: 3")
 				fmt.Print("> ")
 				_, err := fmt.Scanf("%d \n", &nodesNumber)
 				if err != nil {
