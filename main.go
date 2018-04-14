@@ -27,7 +27,7 @@ const (
 	systemPort     = 7078
 
 	waitTablesCount = 32
-	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/master/demo_apps.json"
+	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/demo_apps_14/demo_apps.json"
 	serveKeysPort   = 85
 
 	walletBalance = 100
