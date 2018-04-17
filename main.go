@@ -28,9 +28,10 @@ const (
 
 	waitTablesCount = 32
 	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/demo_apps_14/demo_apps.json"
-	serveKeysPort   = 85
 
 	walletBalance = 100
+
+	apiBaseURL = "http://localhost:7079/api/v2"
 )
 
 var (
@@ -60,7 +61,6 @@ func main() {
 	stop := flag.Bool("stop", false, "Stops the current session without clearing the data.")
 	restart := flag.Bool("restart", false, "Restarts the previous installation attempt.")
 	clear := flag.Bool("clean", false, "Removes all nodes and databases.")
-	slowInstall := flag.Bool("slow", false, "Slow installation for older computers.")
 	flag.Parse()
 
 	if (*start != 0 && (*stop || *restart || *clear)) ||
@@ -72,7 +72,7 @@ func main() {
 	}
 
 	if *start != 0 {
-		startNodes(*start, 5430, *slowInstall)
+		startNodes(*start)
 		return
 	}
 
@@ -96,8 +96,7 @@ func main() {
 2. Type "c" to remove all nodes and databases 
 3. Type "r" to restart the previous installation 
 4. Type "s" to stop the services without clearing the data 
-5. Type "si" to run a slow installation in case of errors during the normal install 
-6. Type "q" to exit.`)
+5. Type "q" to exit.`)
 		fmt.Print("> ")
 		var action string
 		_, err := fmt.Scanf("%s \n", &action)
@@ -113,7 +112,7 @@ func main() {
 				if err != nil {
 					fmt.Println("Error: ", err)
 				} else {
-					startNodes(nodesNumber, 5430, false)
+					startNodes(nodesNumber)
 				}
 			case "c":
 				clearNodes()
@@ -121,16 +120,6 @@ func main() {
 				restartNodes()
 			case "s":
 				stopNodes()
-			case "si":
-				var nodesNumber int
-				fmt.Println("How many nodes do you want to install? Example: 3")
-				fmt.Print("> ")
-				_, err := fmt.Scanf("%d \n", &nodesNumber)
-				if err != nil {
-					fmt.Println("Error: ", err)
-				} else {
-					startNodes(nodesNumber, 5430, true)
-				}
 			}
 		}
 		if action == "q" {
