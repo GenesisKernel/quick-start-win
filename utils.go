@@ -2,12 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
+	"math/big"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +25,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,18 +38,8 @@ var conn *sql.DB
 
 func installPostgres() error {
 	pgbinPath := executablePath + `\pgsql\bin\initdb.exe`
-	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "-U", "postgres", "-A", "trust")
+	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "-U", "postgres", "-A", "trust", "-E", "UTF8")
 	return c.Run()
-}
-
-func changePostgresPort() error {
-	pgConfPath := executablePath + `\data\pgdata\postgresql.conf`
-	bytes, err := ioutil.ReadFile(pgConfPath)
-	if err != nil {
-		return err
-	}
-	newFile := strings.Replace(string(bytes), "#port = 5432", "port = "+strconv.FormatInt(dbPort, 10), -1)
-	return ioutil.WriteFile(pgConfPath, []byte(newFile), 0755)
 }
 
 func startPostgres() error {
@@ -94,7 +93,7 @@ func createDatabases(nodesCount int) error {
 	for i := 1; i <= nodesCount; i++ {
 		dbName := getDBName(i)
 		fmt.Print(fmt.Sprintf("Trying to create database %s... ", dbName))
-		query := fmt.Sprintf(`CREATE DATABASE "%s";`, dbName)
+		query := fmt.Sprintf(`CREATE DATABASE "%s" ENCODING 'UTF8';`, dbName)
 		_, err := conn.Exec(query)
 		if err != nil {
 			return fmt.Errorf("Can't execute query: %s. Error:%s", query, err)
@@ -239,7 +238,7 @@ func (a *nodeConfigArgs) Args() []string {
 		fmt.Sprintf(`--tcpPort=%d`, a.tcpPort),
 		fmt.Sprintf(`--nodesAddr=%s`, a.nodesAddr),
 		fmt.Sprintf(`--logTo=%s`, "log.txt"),
-		fmt.Sprintf(`--verbosity=%s`, nodeLogLevel))
+		fmt.Sprintf(`--logLevel=%s`, nodeLogLevel))
 
 	return args
 }
@@ -379,7 +378,7 @@ func startFront(nodesCount int) error {
 		frontExePath := frontDirPath + binaryFrontName
 
 		port := systemPort + 2*(i-1) + 1
-		apiURL := fmt.Sprintf("http://localhost:%d/api/v2", port)
+		apiURL := fmt.Sprintf("http://localhost:%d", port)
 
 		started := false
 		for i := 0; i < 10; i++ {
@@ -408,9 +407,10 @@ func startFront(nodesCount int) error {
 		}
 
 		args := make([]string, 0)
-		args = append(args, "",
-			fmt.Sprintf(`API_URL=%s`, apiURL),
-			fmt.Sprintf(`PRIVATE_KEY=%s`, string(key)))
+		args = append(args,
+			"--dry",
+			fmt.Sprintf(`--full-node=%s`, apiURL),
+			fmt.Sprintf(`--private-key=%s`, string(key)))
 
 		procAttr := new(os.ProcAttr)
 		procAttr.Files = []*os.File{logFile, logFile, logFile}
@@ -450,7 +450,7 @@ func updateFullNodes(nodesCount int) error {
 	return postTx("UpdateSysParam", &url.Values{
 		"Name":  {"full_nodes"},
 		"Value": {string(b)},
-	})
+	}, nil)
 }
 
 func updateKeys(nodesCount int) error {
@@ -466,8 +466,9 @@ func updateKeys(nodesCount int) error {
 				DBInsert("keys", "id,pub,amount", $KeyID, $PubicKey, "%.0f")
 			}
 		}`, balance)},
-		"Conditions": {`ContractConditions("MainCondition")`},
-	})
+		"Conditions":    {`ContractConditions("MainCondition")`},
+		"ApplicationId": {"1"},
+	}, nil)
 	if err != nil {
 		return err
 	}
@@ -486,7 +487,7 @@ func updateKeys(nodesCount int) error {
 		err = postTx("InsertKey", &url.Values{
 			"KeyID":    {string(keyID)},
 			"PubicKey": {string(publicKey)},
-		})
+		}, nil)
 
 	}
 	return nil
@@ -514,6 +515,57 @@ func sendRequest(method string, url string, payload *url.Values, auth string) ([
 	}
 
 	defer resp.Body.Close()
+	bytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("Can't read response")
+	}
+	return bytes, nil
+}
+
+func sendMultipartRequest(url string, params *url.Values, files map[string][]byte, auth string) ([]byte, error) {
+	client := &http.Client{}
+
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+
+	for key, data := range files {
+		part, err := writer.CreateFormFile(key, key)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := part.Write(data); err != nil {
+			return nil, err
+		}
+	}
+
+	if params != nil {
+		for key := range *params {
+			if err := writer.WriteField(key, params.Get(key)); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, fmt.Errorf("Can't create request")
+	}
+
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Can't execute request ")
+	}
+	defer resp.Body.Close()
+
 	bytes, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("Can't read response")
@@ -568,8 +620,13 @@ func startCentrifugo() error {
 	return nil
 }
 
+func dbConn(number int) (*sql.DB, error) {
+	return sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=disable password=%s",
+		dbHost, dbPort, dbUser, getDBName(number), dbPassword))
+}
+
 func waitDBstatus(number int) error {
-	conn, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=disable password=%s", dbHost, dbPort, dbUser, getDBName(number), dbPassword))
+	conn, err := dbConn(number)
 	if err != nil {
 		return fmt.Errorf("Can't connect to DB. Error: %s", err)
 	}
@@ -611,27 +668,95 @@ func downloadFile(url string) ([]byte, error) {
 	return data, nil
 }
 
-func installDemoPage() error {
-	data, err := downloadFile(demoPageURL)
+func importData(fileURL string) error {
+	data, err := downloadFile(fileURL)
 	if err != nil {
-		return fmt.Errorf("Demo applications download failed. Error: %s", err)
+		return fmt.Errorf("File download failed. Error: %s", err)
 	}
 
-	err = postTx("@1Import", &url.Values{"Data": {string(data)}})
-	if err != nil {
-		return err
-	}
-
-	err = postTx("MembersAutoreg", &url.Values{})
+	err = postTx("@1ImportUpload", nil, map[string][]byte{"input_file": data})
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("OK")
+	parts, err := getImportParts()
+	if err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	var ch = make(chan error, len(parts))
+
+	for _, part := range parts {
+		wg.Add(1)
+		go func(data string) {
+			defer wg.Done()
+			err := postTx("@1Import", &url.Values{"Data": {data}}, nil)
+			if err != nil {
+				ch <- err
+			}
+		}(part.Data)
+	}
+
+	wg.Wait()
+
+	if len(ch) > 0 {
+		return fmt.Errorf("%d of %d transactions", len(parts)-len(ch), len(parts))
+	}
+
 	return nil
 }
 
-func postTx(contract string, form *url.Values) error {
+func installDemoPage() error {
+	return importData(demoPageURL)
+}
+
+func fillLeft(slice []byte) []byte {
+	if len(slice) >= 32 {
+		return slice
+	}
+	return append(make([]byte, 32-len(slice)), slice...)
+}
+
+func sign(privateKey, data string) (ret string, err error) {
+	pubkeyCurve := elliptic.P256()
+
+	b, err := hex.DecodeString(privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	priv := new(ecdsa.PrivateKey)
+	priv.PublicKey.Curve = pubkeyCurve
+	priv.D = new(big.Int).SetBytes(b)
+
+	signhash := sha256.Sum256([]byte(data))
+
+	r, s, err := ecdsa.Sign(rand.Reader, priv, signhash[:])
+	if err != nil {
+		return
+	}
+	b = append(fillLeft(r.Bytes()), fillLeft(s.Bytes())...)
+	return hex.EncodeToString(b), nil
+}
+
+func getPublicKey(privateKey string) (string, error) {
+	b, err := hex.DecodeString(privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	pubkeyCurve := elliptic.P256()
+	priv := new(ecdsa.PrivateKey)
+	priv.PublicKey.Curve = pubkeyCurve
+	priv.D = new(big.Int).SetBytes(b)
+	priv.PublicKey.X, priv.PublicKey.Y = pubkeyCurve.ScalarBaseMult(b)
+
+	b = append(fillLeft(priv.PublicKey.X.Bytes()), fillLeft(priv.PublicKey.Y.Bytes())...)
+	return hex.EncodeToString(b), nil
+}
+
+func postTx(contract string, form *url.Values, files map[string][]byte) error {
 	bytes, err := ioutil.ReadFile(path.Join(getNodePath(1), "PrivateKey"))
 	if err != nil {
 		return fmt.Errorf("Can't read the node's private key. Error: %s", err)
@@ -649,21 +774,19 @@ func postTx(contract string, form *url.Values) error {
 		return fmt.Errorf("Can't parse getuid result")
 	}
 
-	values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
-	res, err = sendRequest("POST", apiBaseURL+"/signtest/", values, "")
+	signature, err := sign(privateKey, "LOGIN"+getUIDResult.UID)
 	if err != nil {
 		return err
 	}
 
-	var signTestResult signTestResult
-	err = json.Unmarshal(res, &signTestResult)
+	publicKey, err := getPublicKey(privateKey)
 	if err != nil {
-		return fmt.Errorf("Can't parse first signTest result")
+		return err
 	}
 
-	fullToken := "Bearer " + getUIDResult.Token
-	values = &url.Values{"pubkey": {signTestResult.Public}, "signature": {signTestResult.Signature}}
-	res, err = sendRequest("POST", apiBaseURL+"/login", values, fullToken)
+	token := "Bearer " + getUIDResult.Token
+	values := &url.Values{"pubkey": {publicKey}, "signature": {signature}}
+	res, err = sendRequest("POST", apiBaseURL+"/login", values, token)
 	if err != nil {
 		return err
 	}
@@ -675,30 +798,27 @@ func postTx(contract string, form *url.Values) error {
 	}
 	jvtToken := "Bearer " + loginResult.Token
 
-	res, err = sendRequest("POST", apiBaseURL+"/prepare/"+contract, form, jvtToken)
+	res, err = sendMultipartRequest(apiBaseURL+"/prepare/"+contract, form, files, jvtToken)
 	if err != nil {
 		return err
 	}
 	var prepareResult prepareResult
 	err = json.Unmarshal(res, &prepareResult)
 	if err != nil {
-		return fmt.Errorf("Can't parse prepare result")
+		return fmt.Errorf("Can't parse prepare result: %s", string(res))
 	}
 
-	values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
-	res, err = sendRequest("POST", apiBaseURL+"/signtest", values, "")
+	signature, err = sign(privateKey, prepareResult.ForSign)
 	if err != nil {
 		return err
 	}
 
-	err = json.Unmarshal(res, &signTestResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse second signTest result")
+	form = &url.Values{
+		"time":      {prepareResult.Time},
+		"signature": {signature},
 	}
 
-	(*form)["time"] = []string{prepareResult.Time}
-	(*form)["signature"] = []string{signTestResult.Signature}
-	res, err = sendRequest("POST", apiBaseURL+"/contract/"+contract, form, jvtToken)
+	res, err = sendRequest("POST", apiBaseURL+"/contract/"+prepareResult.RequestID, form, jvtToken)
 	if err != nil {
 		return err
 	}
@@ -707,7 +827,7 @@ func postTx(contract string, form *url.Values) error {
 
 	err = json.Unmarshal(res, &contractResult)
 	if err != nil {
-		return fmt.Errorf("Can't parse contract result")
+		return fmt.Errorf("Can't parse contract result: %s", string(res))
 	}
 
 	var txstatusResult txstatusResult
@@ -719,12 +839,13 @@ func postTx(contract string, form *url.Values) error {
 
 		err = json.Unmarshal(res, &txstatusResult)
 		if err != nil {
-			fmt.Println("txStatus: ", txstatusResult)
-			return fmt.Errorf("Can't parse txstatus result")
+			return fmt.Errorf("Can't parse txstatus result: %s", string(res))
 		}
 
 		if len(txstatusResult.BlockID) > 0 {
 			break
+		} else if txstatusResult.Message != nil {
+			return fmt.Errorf("%s: %s", txstatusResult.Message.Type, txstatusResult.Message.Error)
 		} else {
 			time.Sleep(time.Second * 5)
 		}
@@ -822,4 +943,31 @@ func isFreePort(port int) bool {
 	}
 	defer conn.Close()
 	return false
+}
+
+type importParam struct {
+	Data string `json:"Data"`
+}
+
+func getImportParts() ([]importParam, error) {
+	conn, err := dbConn(1)
+	if err != nil {
+		return nil, fmt.Errorf("Can't connect to DB. Error: %s", err)
+	}
+	defer conn.Close()
+
+	var data string
+	if err = conn.QueryRow(`SELECT value FROM "1_buffer_data" WHERE key = 'import'`).Scan(&data); err != nil {
+		return nil, err
+	}
+
+	v := struct {
+		Data []importParam `json:"data"`
+	}{}
+
+	if err = json.Unmarshal([]byte(data), &v); err != nil {
+		return nil, err
+	}
+
+	return v.Data, nil
 }

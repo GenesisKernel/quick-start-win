@@ -30,14 +30,6 @@ func startNodes(nodesNumber int) {
 	}
 	fmt.Println("OK")
 
-	fmt.Print("Updating postgres config... ")
-	err = changePostgresPort()
-	if err != nil {
-		fmt.Println("Error: ", err)
-		return
-	}
-	fmt.Println("OK")
-
 	fmt.Println("Connecting to postgres database")
 	err = startPostgres()
 	if err != nil {
@@ -69,7 +61,7 @@ func startNodes(nodesNumber int) {
 		return
 	}
 
-	fmt.Print("Updating keys...")
+	fmt.Print("Updating keys... ")
 	err = updateKeys(nodesNumber)
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -83,11 +75,12 @@ func startNodes(nodesNumber int) {
 		fmt.Println("Error: ", err)
 		return
 	}
+	fmt.Println("OK")
 
 	fmt.Print("Installing demo applications... ")
 	err = installDemoPage()
 	if err != nil {
-		fmt.Println("Error: ", err)
+		fmt.Println("Error:", err)
 		return
 	}
 	fmt.Println("OK")

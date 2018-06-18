@@ -27,10 +27,11 @@ type loginResult struct {
 }
 
 type prepareResult struct {
-	ForSign string            `json:"forsign"`
-	Signs   []TxSignJSON      `json:"signs"`
-	Values  map[string]string `json:"values"`
-	Time    string            `json:"time"`
+	RequestID string            `json:"request_id"`
+	ForSign   string            `json:"forsign"`
+	Signs     []TxSignJSON      `json:"signs"`
+	Values    map[string]string `json:"values"`
+	Time      string            `json:"time"`
 }
 
 type TxSignJSON struct {
