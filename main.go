@@ -27,7 +27,7 @@ const (
 	systemPort     = 7078
 
 	waitTablesCount = 32
-	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/6968662f7eb457b309e14e740dcd8c43909e86d2/basic/basic.json"
+	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/7af853ac247315cd67fb685694ffad54bc3c4732/quick-start-simple/quick-start.json"
 
 	walletBalance = 100
 
