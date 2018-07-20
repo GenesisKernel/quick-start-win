@@ -685,23 +685,30 @@ func importData(fileURL string) error {
 	}
 
 	var wg sync.WaitGroup
-	var ch = make(chan error, len(parts))
+	var errCh = make(chan error, len(parts))
+	var semCh = make(chan bool, maxImportTx)
 
 	for _, part := range parts {
 		wg.Add(1)
 		go func(data string) {
+			semCh <- true
+
 			defer wg.Done()
+			defer func() {
+				<-semCh
+			}()
+
 			err := postTx("@1Import", &url.Values{"Data": {data}}, nil)
 			if err != nil {
-				ch <- err
+				errCh <- err
 			}
 		}(part.Data)
 	}
 
 	wg.Wait()
 
-	if len(ch) > 0 {
-		return fmt.Errorf("%d of %d transactions", len(parts)-len(ch), len(parts))
+	if len(errCh) > 0 {
+		return fmt.Errorf("%d of %d transactions", len(parts)-len(errCh), len(parts))
 	}
 
 	return nil
