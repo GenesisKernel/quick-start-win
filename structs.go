@@ -1,7 +1,5 @@
 package main
 
-import "fmt"
-
 type getUIDResult struct {
 	UID         string `json:"uid,omitempty"`
 	Token       string `json:"token,omitempty"`
@@ -29,10 +27,11 @@ type loginResult struct {
 }
 
 type prepareResult struct {
-	ForSign string            `json:"forsign"`
-	Signs   []TxSignJSON      `json:"signs"`
-	Values  map[string]string `json:"values"`
-	Time    string            `json:"time"`
+	RequestID string            `json:"request_id"`
+	ForSign   string            `json:"forsign"`
+	Signs     []TxSignJSON      `json:"signs"`
+	Values    map[string]string `json:"values"`
+	Time      string            `json:"time"`
 }
 
 type TxSignJSON struct {
@@ -65,11 +64,8 @@ type txstatusError struct {
 }
 
 type nodeValue struct {
-	Host   string
-	KeyID  string
-	PubKey string
-}
-
-func (nv *nodeValue) String() string {
-	return fmt.Sprintf(`["%s", "%s", "%s"]`, nv.Host, nv.KeyID, nv.PubKey)
+	TCPAddr string `json:"tcp_address"`
+	APIAddr string `json:"api_address"`
+	KeyID   string `json:"key_id"`
+	PubKey  string `json:"public_key"`
 }

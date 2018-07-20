@@ -2,12 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"math"
+	"math/big"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,6 +25,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -29,18 +38,8 @@ var conn *sql.DB
 
 func installPostgres() error {
 	pgbinPath := executablePath + `\pgsql\bin\initdb.exe`
-	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "-U", "postgres", "-A", "trust")
+	c := exec.Command(pgbinPath, "-D", executablePath+`\data\pgdata`, "-U", "postgres", "-A", "trust", "-E", "UTF8")
 	return c.Run()
-}
-
-func changePostgresPort(port int64) error {
-	pgConfPath := executablePath + `\data\pgdata\postgresql.conf`
-	bytes, err := ioutil.ReadFile(pgConfPath)
-	if err != nil {
-		return err
-	}
-	newFile := strings.Replace(string(bytes), "#port = 5432", "port = "+strconv.FormatInt(port, 10), -1)
-	return ioutil.WriteFile(pgConfPath, []byte(newFile), 0755)
 }
 
 func startPostgres() error {
@@ -94,7 +93,7 @@ func createDatabases(nodesCount int) error {
 	for i := 1; i <= nodesCount; i++ {
 		dbName := getDBName(i)
 		fmt.Print(fmt.Sprintf("Trying to create database %s... ", dbName))
-		query := fmt.Sprintf(`CREATE DATABASE "%s";`, dbName)
+		query := fmt.Sprintf(`CREATE DATABASE "%s" ENCODING 'UTF8';`, dbName)
 		_, err := conn.Exec(query)
 		if err != nil {
 			return fmt.Errorf("Can't execute query: %s. Error:%s", query, err)
@@ -210,41 +209,67 @@ func dirEmpty(path string) (bool, error) {
 	return true, nil
 }
 
-type nodeArgs struct {
-	workDir            string
-	initConfig         bool
-	tcpPort            int
-	httpPort           int
-	initDatabase       bool
-	dbName             string
-	generateFirstBlock bool
-	firstBlockPath     string
-	noStart            bool
-	keyID              int
+type nodeArgs interface {
+	Args() []string
 }
 
-func (a *nodeArgs) Args() []string {
-	args := make([]string, 0)
-	args = append(args, fmt.Sprintf(`-workDir=%s`, a.workDir),
-		fmt.Sprintf(`-initConfig=%t`, a.initConfig),
-		fmt.Sprintf(`-tcpPort=%d`, a.tcpPort),
-		fmt.Sprintf(`-httpPort=%d`, a.httpPort),
-		fmt.Sprintf(`-initDatabase=%t`, a.initDatabase),
-		fmt.Sprintf(`-dbHost=%s`, dbHost),
-		fmt.Sprintf(`-dbPort=%d`, dbPort),
-		fmt.Sprintf(`-dbName=%s`, a.dbName),
-		fmt.Sprintf(`-dbUser=%s`, dbUser),
-		fmt.Sprintf(`-dbPassword=%s`, dbPassword),
-		fmt.Sprintf(`-generateFirstBlock=%t`, a.generateFirstBlock),
-		fmt.Sprintf(`-firstBlockPath=%s`, a.firstBlockPath),
-		fmt.Sprintf(`-centrifugoSecret=%s`, centrifugoSecret),
-		fmt.Sprintf(`-centrifugoUrl=%s`, centrifugoURL),
-		fmt.Sprintf(`-keyID=%d`, a.keyID),
-		fmt.Sprintf(`-privateBlockchain=%d`, 1),
-		fmt.Sprintf(`-noStart=%t`, a.noStart),
-		fmt.Sprintf(`-logLevel=%s`, nodeLogLevel))
+type nodeConfigArgs struct {
+	dataDir    string
+	firstBlock string
+	dbName     string
+	httpPort   int
+	tcpPort    int
+	nodesAddr  string
+}
+
+func (a *nodeConfigArgs) Args() []string {
+	args := []string{"config"}
+
+	args = append(args, fmt.Sprintf(`--centSecret=%s`, centrifugoSecret),
+		fmt.Sprintf(`--centUrl=%s`, centrifugoURL),
+		fmt.Sprintf(`--dataDir=%s`, a.dataDir),
+		fmt.Sprintf(`--dbHost=%s`, dbHost),
+		fmt.Sprintf(`--dbPort=%d`, dbPort),
+		fmt.Sprintf(`--dbUser=%s`, dbUser),
+		fmt.Sprintf(`--dbPassword=%s`, dbPassword),
+		fmt.Sprintf(`--dbName=%s`, a.dbName),
+		fmt.Sprintf(`--firstBlock=%s`, a.firstBlock),
+		fmt.Sprintf(`--httpPort=%d`, a.httpPort),
+		fmt.Sprintf(`--tcpPort=%d`, a.tcpPort),
+		fmt.Sprintf(`--nodesAddr=%s`, a.nodesAddr),
+		fmt.Sprintf(`--logTo=%s`, "log.txt"),
+		fmt.Sprintf(`--logLevel=%s`, nodeLogLevel))
 
 	return args
+}
+
+type nodeCommandArgs struct {
+	command string
+	config  string
+}
+
+func (a *nodeCommandArgs) Args() []string {
+	return []string{a.command, fmt.Sprintf(`--config=%s`, a.config)}
+}
+
+func nodeCommand(args nodeArgs) (*exec.Cmd, error) {
+	binaryPath := path.Join(executablePath, "back", binaryBackName)
+
+	command := exec.Command(binaryPath, args.Args()...)
+	err := command.Start()
+	if err != nil {
+		return nil, err
+	}
+
+	return command, nil
+}
+
+func waitNodeCommand(args nodeArgs) error {
+	command, err := nodeCommand(args)
+	if err != nil {
+		return err
+	}
+	return command.Wait()
 }
 
 func createLogFile(logFilePath string) (*os.File, error) {
@@ -255,30 +280,14 @@ func createLogFile(logFilePath string) (*os.File, error) {
 	return logFile, nil
 }
 
-func startNode(args *nodeArgs) error {
-	binaryPath := path.Join(executablePath, "back", binaryBackName)
-
-	logFile, err := createLogFile(path.Join(args.workDir, "log.txt"))
+func startNode(nodeNumber int) error {
+	configPath := path.Join(getNodePath(nodeNumber), "config.toml")
+	command, err := nodeCommand(&nodeCommandArgs{"start", configPath})
 	if err != nil {
 		return err
 	}
 
-	procAttr := &os.ProcAttr{
-		Files: []*os.File{nil, logFile, logFile},
-		Dir:   args.workDir,
-	}
-
-	proc, err := os.StartProcess(binaryPath, args.Args(), procAttr)
-	if err != nil {
-		return err
-	}
-
-	if args.noStart {
-		proc.Wait()
-		return nil
-	}
-
-	nodeProcesses = append(nodeProcesses, proc)
+	nodeProcesses = append(nodeProcesses, command.Process)
 
 	return nil
 }
@@ -287,101 +296,70 @@ func getNodePath(number int) string {
 	return fmt.Sprintf(`%s\data\%d\back\`, executablePath, number)
 }
 
-func initNodes(nodesCount int) error {
-	firstNodePath := getNodePath(1)
-	firstBlockPath := firstNodePath + firstBlockFile
+func initNode(nodeNumber int) error {
+	port := systemPort + (nodeNumber-1)*2
+	dataDir := getNodePath(nodeNumber)
+	configPath := path.Join(dataDir, "config.toml")
+	firstBlockPath := path.Join(getNodePath(1), firstBlockFile)
 
-	fmt.Print("Starting node #1... ")
-	err := startNode(&nodeArgs{
-		workDir:            firstNodePath,
-		initConfig:         true,
-		tcpPort:            systemPort,
-		httpPort:           systemPort + 1,
-		initDatabase:       true,
-		dbName:             getDBName(1),
-		generateFirstBlock: true,
-		firstBlockPath:     firstBlockPath,
-	})
-	if err != nil {
-		fmt.Println(err)
+	config := &nodeConfigArgs{
+		dataDir:    dataDir,
+		firstBlock: firstBlockPath,
+		dbName:     getDBName(nodeNumber),
+		tcpPort:    port,
+		httpPort:   port + 1,
+	}
+
+	if nodeNumber != 1 {
+		config.nodesAddr = fmt.Sprintf("%s:%d", "127.0.0.1", systemPort)
+	}
+
+	if err := waitNodeCommand(config); err != nil {
 		return err
 	}
-	err = waitDBstatus(1)
-	if err != nil {
-		fmt.Println(err)
+
+	if err := waitNodeCommand(&nodeCommandArgs{"generateKeys", configPath}); err != nil {
 		return err
 	}
-	fmt.Println("OK")
 
-	for i := 2; i <= nodesCount; i++ {
-		fmt.Print(fmt.Sprintf("Initializing node #%d... ", i))
-		port := systemPort + (i-1)*2
-		err := startNode(&nodeArgs{
-			workDir:            getNodePath(i),
-			initConfig:         true,
-			tcpPort:            port,
-			httpPort:           port + 1,
-			initDatabase:       true,
-			dbName:             getDBName(i),
-			generateFirstBlock: true,
-			firstBlockPath:     os.DevNull,
-			noStart:            true,
-		})
-		if err != nil {
-			fmt.Println(err)
+	if nodeNumber == 1 {
+		if err := waitNodeCommand(&nodeCommandArgs{"generateFirstBlock", configPath}); err != nil {
 			return err
 		}
+	}
+
+	return waitNodeCommand(&nodeCommandArgs{"initDatabase", configPath})
+}
+
+func initNodes(nodesCount int) error {
+	for i := 1; i <= nodesCount; i++ {
+		fmt.Print(fmt.Sprintf("Initializing node #%d... ", i))
+
+		if err := initNode(i); err != nil {
+			fmt.Printf("Error: %s\n", err)
+			return err
+		}
+
 		fmt.Println("OK")
 	}
 
 	return nil
 }
 
-func connectNodes(nodesCount int) error {
-	return startExistingNodes(2, nodesCount, true)
-}
+func startExistingNodes(nodesCount int, isInit bool) error {
+	for i := 1; i <= nodesCount; i++ {
+		fmt.Printf("Starting node #%d... ", i)
 
-func startExistingNodes(offsetNode, nodesCount int, isInit bool) error {
-	firstBlockPath := getNodePath(1) + firstBlockFile
-
-	for i := offsetNode; i <= nodesCount; i++ {
-		fmt.Print(fmt.Sprintf("Starting node #%d... ", i))
-
-		port := systemPort + (i-1)*2
-
-		nodePath := getNodePath(i)
-		data, err := ioutil.ReadFile(nodePath + "KeyID")
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-		keyID, err := strconv.Atoi(string(data))
-		if err != nil {
-			fmt.Println(err)
-			return err
-		}
-
-		err = startNode(&nodeArgs{
-			workDir:        nodePath,
-			initConfig:     isInit,
-			tcpPort:        port,
-			httpPort:       port + 1,
-			initDatabase:   isInit,
-			dbName:         getDBName(i),
-			firstBlockPath: firstBlockPath,
-			keyID:          keyID,
-		})
-		if err != nil {
-			fmt.Println(err)
+		if err := startNode(i); err != nil {
+			fmt.Printf("Error: %s\n", err)
 			return err
 		}
 
 		time.Sleep(5 * time.Second)
 
 		if isInit {
-			err = waitDBstatus(i)
-			if err != nil {
-				fmt.Println(err)
+			if err := waitDBstatus(i); err != nil {
+				fmt.Printf("Error: %e\n", err)
 				return err
 			}
 		}
@@ -400,7 +378,7 @@ func startFront(nodesCount int) error {
 		frontExePath := frontDirPath + binaryFrontName
 
 		port := systemPort + 2*(i-1) + 1
-		apiURL := fmt.Sprintf("http://localhost:%d/api/v2", port)
+		apiURL := fmt.Sprintf("http://localhost:%d", port)
 
 		started := false
 		for i := 0; i < 10; i++ {
@@ -417,6 +395,11 @@ func startFront(nodesCount int) error {
 			continue
 		}
 
+		key, err := ioutil.ReadFile(path.Join(getNodePath(i), "PrivateKey"))
+		if err != nil {
+			return err
+		}
+
 		logFile, err := createLogFile(frontDirPath + "log.txt")
 		if err != nil {
 			fmt.Println(err)
@@ -424,8 +407,10 @@ func startFront(nodesCount int) error {
 		}
 
 		args := make([]string, 0)
-		args = append(args, "", fmt.Sprintf(`API_URL=%s`, apiURL),
-			fmt.Sprintf(`PRIVATE_KEY=http://localhost:%d/%d`, serveKeysPort, i))
+		args = append(args,
+			"--dry",
+			fmt.Sprintf(`--full-node=%s`, apiURL),
+			fmt.Sprintf(`--private-key=%s`, string(key)))
 
 		procAttr := new(os.ProcAttr)
 		procAttr.Files = []*os.File{logFile, logFile, logFile}
@@ -445,362 +430,64 @@ func startFront(nodesCount int) error {
 
 func upNodes(nodesCount int) error {
 	killProcesses()
-	return startExistingNodes(1, nodesCount, false)
-}
-
-func startServingFiles(nodesCount int) (*http.Server, error) {
-	keysDir := executablePath + `\data\keys\`
-	nodeKeyPath := executablePath + `\data\%d\back\PrivateKey`
-
-	server := &http.Server{Addr: "localhost:" + strconv.Itoa(serveKeysPort)}
-
-	for i := 1; i < nodesCount+1; i++ {
-		err := copy.Copy(fmt.Sprintf(nodeKeyPath, i), keysDir+fmt.Sprintf("%d", i))
-		if err != nil {
-			return nil, err
-		}
-	}
-	go func() {
-		mux := http.NewServeMux()
-		fs := http.FileServer(http.Dir(keysDir))
-		mux.Handle("/", fs)
-
-		server.Handler = mux
-		err := server.ListenAndServe()
-		if err != nil {
-			return
-		}
-	}()
-
-	return server, nil
+	return startExistingNodes(nodesCount, false)
 }
 
 func updateFullNodes(nodesCount int) error {
-	privateKey := ""
-	for i := 0; i < 10; i++ {
-		pKey, err := os.OpenFile(executablePath+`\data\1\back\PrivateKey`, os.O_RDONLY, 0755)
-		if err != nil {
-			time.Sleep(time.Second * 5)
-			continue
-		}
-		bytes, err := ioutil.ReadAll(pKey)
-		if err != nil {
-			return fmt.Errorf("Can't read the node's private key. Error: %e", err)
-		}
-		privateKey = string(bytes)
-		pKey.Close()
-		break
-	}
-	if privateKey == "" {
-		return fmt.Errorf("Can't open the node's private key")
-	}
-	newVals := ""
+	var nodes []*nodeValue
 	for i := 1; i <= nodesCount; i++ {
 		val, err := getFullNodeValue(i)
 		if err != nil {
 			return err
 		}
-		newVals += val.String() + ","
+		nodes = append(nodes, val)
 	}
-	newVals = "[" + strings.TrimRight(newVals, ",") + "]"
-
-	baseURL := "http://localhost:7079/api/v2"
-	res, err := sendRequest("GET", baseURL+"/getuid", nil, "")
+	b, err := json.Marshal(&nodes)
 	if err != nil {
 		return err
 	}
 
-	var getUIDResult getUIDResult
-	err = json.Unmarshal(res, &getUIDResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse first getuid result")
-	}
-
-	values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
-	res, err = sendRequest("POST", baseURL+"/signtest/", values, "")
-	if err != nil {
-		return err
-	}
-
-	var signTestResult signTestResult
-	err = json.Unmarshal(res, &signTestResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse first signTest result")
-	}
-
-	fullToken := "Bearer " + getUIDResult.Token
-	values = &url.Values{"pubkey": {signTestResult.Public}, "signature": {signTestResult.Signature}}
-	res, err = sendRequest("POST", baseURL+"/login", values, fullToken)
-	if err != nil {
-		return err
-	}
-
-	var loginResult loginResult
-	err = json.Unmarshal(res, &loginResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse first login result")
-	}
-	jvtToken := "Bearer " + loginResult.Token
-
-	values = &url.Values{"Name": {"full_nodes"}, "Value": {newVals}}
-	res, err = sendRequest("POST", baseURL+"/prepare/UpdateSysParam", values, jvtToken)
-	if err != nil {
-		return err
-	}
-	var prepareResult prepareResult
-	err = json.Unmarshal(res, &prepareResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse first prepare result")
-	}
-
-	values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
-	res, err = sendRequest("POST", baseURL+"/signtest", values, "")
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(res, &signTestResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse second signTest result")
-	}
-
-	values = &url.Values{"Name": {"full_nodes"}, "Value": {newVals}, "time": {prepareResult.Time}, "signature": {signTestResult.Signature}}
-	res, err = sendRequest("POST", baseURL+"/contract/UpdateSysParam", values, jvtToken)
-	if err != nil {
-		return err
-	}
-
-	var contractResult contractResult
-
-	err = json.Unmarshal(res, &contractResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse contract result")
-	}
-
-	var txstatusResult txstatusResult
-	for i := 0; i < 10; i++ {
-		res, err = sendRequest("GET", baseURL+"/txstatus/"+contractResult.Hash, nil, jvtToken)
-		if err != nil {
-			return err
-		}
-
-		err = json.Unmarshal(res, &txstatusResult)
-		if err != nil {
-			fmt.Println("txStatus: ", txstatusResult)
-			return fmt.Errorf("Can't parse txstatus result")
-		}
-		if txstatusResult.BlockID == "" {
-			time.Sleep(time.Second * 5)
-		} else {
-			break
-		}
-	}
-
-	if txstatusResult.BlockID == "" {
-		return fmt.Errorf("Operation timeout error")
-	}
-
-	if txstatusResult.BlockID == "0" {
-		return fmt.Errorf("Can't update Genesis system parameters")
-	}
-	fmt.Println("OK")
-	return nil
+	return postTx("UpdateSysParam", &url.Values{
+		"Name":  {"full_nodes"},
+		"Value": {string(b)},
+	}, nil)
 }
 
 func updateKeys(nodesCount int) error {
-	baseURL := "http://localhost:7079/api/v2"
-
-	pKey, err := os.OpenFile(executablePath+`\data\1\back\PrivateKey`, os.O_RDONLY, 0755)
+	balance := walletBalance * math.Pow(10, 18)
+	err := postTx("NewContract", &url.Values{
+		"Value": {fmt.Sprintf(`contract InsertKey {
+			data {
+				KeyID int
+				PubicKey string
+			}
+			conditions {}
+			action {
+				DBInsert("keys", "id,pub,amount", $KeyID, $PubicKey, "%.0f")
+			}
+		}`, balance)},
+		"Conditions":    {`ContractConditions("MainCondition")`},
+		"ApplicationId": {"1"},
+	}, nil)
 	if err != nil {
-		return fmt.Errorf("Can't open the node's private key. Error: %s", err)
+		return err
 	}
-	defer pKey.Close()
-	bytes, err := ioutil.ReadAll(pKey)
-	if err != nil {
-		return fmt.Errorf("Can't read the node's private key. Error: %e", err)
-	}
-	privateKey := string(bytes)
 
 	for i := 2; i < nodesCount+1; i++ {
-		kID, err := os.OpenFile(executablePath+fmt.Sprintf(`\data\%d\back\KeyID`, i), os.O_RDONLY, 0755)
-		if err != nil {
-			return fmt.Errorf("Can't open the node's keyID. Error: %s", err)
-		}
-		defer kID.Close()
-		bytes, err := ioutil.ReadAll(kID)
+		keyID, err := ioutil.ReadFile(path.Join(getNodePath(i), "KeyID"))
 		if err != nil {
 			return fmt.Errorf("Can't read the node's keyID. Error: %s", err)
 		}
-		keyID := string(bytes)
 
-		pub, err := os.OpenFile(executablePath+fmt.Sprintf(`\data\%d\back\PublicKey`, i), os.O_RDONLY, 0755)
-		if err != nil {
-			return fmt.Errorf("Can't open the node's public key. Error: %s", err)
-		}
-		defer pub.Close()
-		bytes, err = ioutil.ReadAll(pub)
+		publicKey, err := ioutil.ReadFile(path.Join(getNodePath(i), "PublicKey"))
 		if err != nil {
 			return fmt.Errorf("Can't read the node's public key. Error: %s", err)
 		}
-		pubKey := string(bytes)
 
-		res, err := sendRequest("GET", baseURL+"/getuid", nil, "")
-		if err != nil {
-			return err
-		}
-		var getUIDResult getUIDResult
-		err = json.Unmarshal(res, &getUIDResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse first getuid result")
-		}
-
-		values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
-		res, err = sendRequest("POST", baseURL+"/signtest/", values, "")
-		if err != nil {
-			return err
-		}
-
-		var signTestResult signTestResult
-		err = json.Unmarshal(res, &signTestResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse first signTest result")
-		}
-
-		fullToken := "Bearer " + getUIDResult.Token
-		values = &url.Values{"pubkey": {signTestResult.Public}, "signature": {signTestResult.Signature}}
-		res, err = sendRequest("POST", baseURL+"/login", values, fullToken)
-		if err != nil {
-			return err
-		}
-
-		var loginResult loginResult
-		err = json.Unmarshal(res, &loginResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse first login result")
-		}
-
-		jvtToken := "Bearer " + loginResult.Token
-
-		contName := "con_updatekeys" + strconv.FormatInt(int64(i), 10)
-		balance := walletBalance * math.Pow(10, 18)
-		updateKeysCode := fmt.Sprintf(`contract %s {data {}conditions {} action {$result=DBInsert("keys", "id,pub,amount", "%s", "%s", "%.0f") }}`, contName, keyID, pubKey, balance)
-		values = &url.Values{"Wallet": {""}, "Value": {updateKeysCode}, "Conditions": {`"ContractConditions(` + "`MainCondition`" + `)"`}}
-
-		res, err = sendRequest("POST", baseURL+"/prepare/NewContract", values, jvtToken)
-		if err != nil {
-			return err
-		}
-		var prepareResult prepareResult
-		err = json.Unmarshal(res, &prepareResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse first prepare result")
-		}
-
-		values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
-		res, err = sendRequest("POST", baseURL+"/signtest/", values, "")
-		if err != nil {
-			return err
-		}
-
-		err = json.Unmarshal(res, &signTestResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse first signTest result")
-		}
-
-		values = &url.Values{"Wallet": {""}, "Value": {updateKeysCode}, "Conditions": {`"ContractConditions(` + "`MainCondition`" + `)"`}, "time": {prepareResult.Time}, "signature": {signTestResult.Signature}}
-		res, err = sendRequest("POST", baseURL+"/contract/NewContract", values, jvtToken)
-		if err != nil {
-			return err
-		}
-
-		var contractResult contractResult
-		err = json.Unmarshal(res, &contractResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse contract result")
-		}
-
-		var txstatusResult txstatusResult
-		for i := 0; i < 10; i++ {
-			res, err = sendRequest("GET", baseURL+"/txstatus/"+contractResult.Hash, nil, jvtToken)
-			if err != nil {
-				return err
-			}
-
-			err = json.Unmarshal(res, &txstatusResult)
-			if err != nil {
-				return fmt.Errorf("Can't parse txstatus result")
-			}
-			if txstatusResult.BlockID == "" {
-				time.Sleep(time.Second * 5)
-			} else {
-				break
-			}
-		}
-		if txstatusResult.BlockID == "" {
-			return fmt.Errorf("Operation timeout error")
-		}
-
-		if txstatusResult.BlockID == "0" {
-			return fmt.Errorf("Keys update request failed")
-		}
-
-		values = &url.Values{}
-		res, err = sendRequest("POST", baseURL+"/prepare/"+contName, values, jvtToken)
-		if err != nil {
-			return err
-		}
-
-		err = json.Unmarshal(res, &prepareResult)
-		if err != nil {
-			return fmt.Errorf("can't parse second prepare result")
-		}
-
-		values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
-		res, err = sendRequest("POST", baseURL+"/signtest/", values, "")
-		if err != nil {
-			return err
-		}
-
-		err = json.Unmarshal(res, &signTestResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse second prepare result")
-		}
-
-		values = &url.Values{"time": {prepareResult.Time}, "signature": {signTestResult.Signature}}
-		res, err = sendRequest("POST", baseURL+"/contract/"+contName, values, jvtToken)
-		if err != nil {
-			return err
-		}
-
-		err = json.Unmarshal(res, &contractResult)
-		if err != nil {
-			return fmt.Errorf("Can't parse second contract result")
-		}
-
-		for i := 0; i < 10; i++ {
-			res, err = sendRequest("GET", baseURL+"/txstatus/"+contractResult.Hash, nil, jvtToken)
-			if err != nil {
-				return err
-			}
-
-			err = json.Unmarshal(res, &txstatusResult)
-			if err != nil {
-				return fmt.Errorf("Can't parse txstatus result")
-			}
-			if txstatusResult.BlockID == "" {
-				time.Sleep(time.Second * 5)
-			} else {
-				break
-			}
-		}
-
-		if txstatusResult.BlockID == "" {
-			return fmt.Errorf("Operation timeout error")
-		}
-
-		if txstatusResult.BlockID == "0" {
-			return fmt.Errorf("Keys update contract failed")
-		}
+		err = postTx("InsertKey", &url.Values{
+			"KeyID":    {string(keyID)},
+			"PubicKey": {string(publicKey)},
+		}, nil)
 
 	}
 	return nil
@@ -835,51 +522,76 @@ func sendRequest(method string, url string, payload *url.Values, auth string) ([
 	return bytes, nil
 }
 
-func getFullNodeValue(nodeNumber int) (nodeValue, error) {
-	keyID := ""
-	publicKey := ""
-	for i := 0; i < 10; i++ {
-		kID, err := os.OpenFile(executablePath+`\data\`+strconv.FormatInt(int64(nodeNumber), 10)+`\back\KeyID`, os.O_RDONLY, 0755)
+func sendMultipartRequest(url string, params *url.Values, files map[string][]byte, auth string) ([]byte, error) {
+	client := &http.Client{}
+
+	body := new(bytes.Buffer)
+	writer := multipart.NewWriter(body)
+
+	for key, data := range files {
+		part, err := writer.CreateFormFile(key, key)
 		if err != nil {
-			time.Sleep(time.Second * 5)
-			continue
+			return nil, err
 		}
-		defer kID.Close()
-		bytes, err := ioutil.ReadAll(kID)
-		if err != nil {
-			return nodeValue{}, fmt.Errorf("Can't read node's KeyID. Error: %s", err)
+		if _, err := part.Write(data); err != nil {
+			return nil, err
 		}
-		keyID = string(bytes)
-		break
 	}
 
-	for i := 0; i < 10; i++ {
-		publicKeyFile, err := os.OpenFile(executablePath+`\data\`+strconv.FormatInt(int64(nodeNumber), 10)+`\back\NodePublicKey`, os.O_RDONLY, 0755)
-		if err != nil {
-			time.Sleep(time.Second * 5)
-			continue
+	if params != nil {
+		for key := range *params {
+			if err := writer.WriteField(key, params.Get(key)); err != nil {
+				return nil, err
+			}
 		}
-		defer publicKeyFile.Close()
-		publicBytes, err := ioutil.ReadAll(publicKeyFile)
-		if err != nil {
-			return nodeValue{}, fmt.Errorf("Can't read node's public key. Error: %s", err)
-		}
-		publicKey = string(publicBytes)
-		break
 	}
 
-	if keyID == "" {
-		return nodeValue{}, fmt.Errorf("Can't open node's %d KeyID", nodeNumber)
-	}
-	if publicKey == "" {
-		return nodeValue{}, fmt.Errorf("Can't open node's %d NodePublicKey", nodeNumber)
+	if err := writer.Close(); err != nil {
+		return nil, err
 	}
 
-	if nodeNumber == 1 {
-		return nodeValue{Host: "127.0.0.1", KeyID: keyID, PubKey: publicKey}, nil
+	req, err := http.NewRequest("POST", url, body)
+	if err != nil {
+		return nil, fmt.Errorf("Can't create request")
 	}
 
-	return nodeValue{Host: "127.0.0.1:" + strconv.FormatInt(int64(systemPort+(nodeNumber-1)*2), 10), KeyID: keyID, PubKey: publicKey}, nil
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Can't execute request ")
+	}
+	defer resp.Body.Close()
+
+	bytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("Can't read response")
+	}
+	return bytes, nil
+}
+
+func getFullNodeValue(nodeNumber int) (*nodeValue, error) {
+	keyID, err := ioutil.ReadFile(path.Join(getNodePath(nodeNumber), "KeyID"))
+	if err != nil {
+		return nil, fmt.Errorf("Can't read node's KeyID. Error: %s", err)
+	}
+
+	publicKey, err := ioutil.ReadFile(path.Join(getNodePath(nodeNumber), "NodePublicKey"))
+	if err != nil {
+		return nil, fmt.Errorf("Can't read node's public key. Error: %s", err)
+	}
+
+	port := systemPort + (nodeNumber-1)*2
+
+	return &nodeValue{
+		TCPAddr: fmt.Sprintf("127.0.0.1:%d", port),
+		APIAddr: fmt.Sprintf("http://127.0.0.1:%d", port+1),
+		KeyID:   string(keyID),
+		PubKey:  string(publicKey),
+	}, nil
 }
 
 func dirContainFiles(dirList []os.FileInfo, necessaryFiles []string) bool {
@@ -908,8 +620,13 @@ func startCentrifugo() error {
 	return nil
 }
 
+func dbConn(number int) (*sql.DB, error) {
+	return sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=disable password=%s",
+		dbHost, dbPort, dbUser, getDBName(number), dbPassword))
+}
+
 func waitDBstatus(number int) error {
-	conn, err := sql.Open("postgres", fmt.Sprintf("host=%s port=%d user=%s dbname=%s sslmode=disable password=%s", dbHost, dbPort, dbUser, getDBName(number), dbPassword))
+	conn, err := dbConn(number)
 	if err != nil {
 		return fmt.Errorf("Can't connect to DB. Error: %s", err)
 	}
@@ -951,48 +668,102 @@ func downloadFile(url string) ([]byte, error) {
 	return data, nil
 }
 
-func installDemoPage() error {
-	data, err := downloadFile(demoPageURL)
+func importData(fileURL string) error {
+	data, err := downloadFile(fileURL)
 	if err != nil {
-		return fmt.Errorf("Demo applications download failed. Error: %s", err)
+		return fmt.Errorf("File download failed. Error: %s", err)
 	}
 
-	err = postTx("@1Import", &url.Values{"Data": {string(data)}})
-	if err != nil {
-		return err
-	}
-
-	err = postTx("MembersAutoreg", &url.Values{})
+	err = postTx("@1ImportUpload", nil, map[string][]byte{"input_file": data})
 	if err != nil {
 		return err
 	}
 
-	fmt.Println("OK")
+	parts, err := getImportParts()
+	if err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	var ch = make(chan error, len(parts))
+
+	for _, part := range parts {
+		wg.Add(1)
+		go func(data string) {
+			defer wg.Done()
+			err := postTx("@1Import", &url.Values{"Data": {data}}, nil)
+			if err != nil {
+				ch <- err
+			}
+		}(part.Data)
+	}
+
+	wg.Wait()
+
+	if len(ch) > 0 {
+		return fmt.Errorf("%d of %d transactions", len(parts)-len(ch), len(parts))
+	}
+
 	return nil
 }
 
-func postTx(contract string, form *url.Values) error {
-	privateKey := ""
-	for i := 0; i < 10; i++ {
-		pKey, err := os.OpenFile(executablePath+`\data\1\back\PrivateKey`, os.O_RDONLY, 0755)
-		if err != nil {
-			time.Sleep(time.Second * 5)
-			continue
-		}
-		bytes, err := ioutil.ReadAll(pKey)
-		if err != nil {
-			return fmt.Errorf("Can't read the node's private key. Error: %s", err)
-		}
-		privateKey = string(bytes)
-		pKey.Close()
-		break
+func installDemoPage() error {
+	return importData(demoPageURL)
+}
+
+func fillLeft(slice []byte) []byte {
+	if len(slice) >= 32 {
+		return slice
 	}
-	if privateKey == "" {
-		return fmt.Errorf("Can't open the node's private key")
+	return append(make([]byte, 32-len(slice)), slice...)
+}
+
+func sign(privateKey, data string) (ret string, err error) {
+	pubkeyCurve := elliptic.P256()
+
+	b, err := hex.DecodeString(privateKey)
+	if err != nil {
+		return "", err
 	}
 
-	baseURL := "http://localhost:7079/api/v2"
-	res, err := sendRequest("GET", baseURL+"/getuid", nil, "")
+	priv := new(ecdsa.PrivateKey)
+	priv.PublicKey.Curve = pubkeyCurve
+	priv.D = new(big.Int).SetBytes(b)
+
+	signhash := sha256.Sum256([]byte(data))
+
+	r, s, err := ecdsa.Sign(rand.Reader, priv, signhash[:])
+	if err != nil {
+		return
+	}
+	b = append(fillLeft(r.Bytes()), fillLeft(s.Bytes())...)
+	return hex.EncodeToString(b), nil
+}
+
+func getPublicKey(privateKey string) (string, error) {
+	b, err := hex.DecodeString(privateKey)
+	if err != nil {
+		return "", err
+	}
+
+	pubkeyCurve := elliptic.P256()
+	priv := new(ecdsa.PrivateKey)
+	priv.PublicKey.Curve = pubkeyCurve
+	priv.D = new(big.Int).SetBytes(b)
+	priv.PublicKey.X, priv.PublicKey.Y = pubkeyCurve.ScalarBaseMult(b)
+
+	b = append(fillLeft(priv.PublicKey.X.Bytes()), fillLeft(priv.PublicKey.Y.Bytes())...)
+	return hex.EncodeToString(b), nil
+}
+
+func postTx(contract string, form *url.Values, files map[string][]byte) error {
+	bytes, err := ioutil.ReadFile(path.Join(getNodePath(1), "PrivateKey"))
+	if err != nil {
+		return fmt.Errorf("Can't read the node's private key. Error: %s", err)
+	}
+	privateKey := string(bytes)
+
+	res, err := sendRequest("GET", apiBaseURL+"/getuid", nil, "")
 	if err != nil {
 		return err
 	}
@@ -1003,21 +774,19 @@ func postTx(contract string, form *url.Values) error {
 		return fmt.Errorf("Can't parse getuid result")
 	}
 
-	values := &url.Values{"forsign": {getUIDResult.UID}, "private": {privateKey}}
-	res, err = sendRequest("POST", baseURL+"/signtest/", values, "")
+	signature, err := sign(privateKey, "LOGIN"+getUIDResult.UID)
 	if err != nil {
 		return err
 	}
 
-	var signTestResult signTestResult
-	err = json.Unmarshal(res, &signTestResult)
+	publicKey, err := getPublicKey(privateKey)
 	if err != nil {
-		return fmt.Errorf("Can't parse first signTest result")
+		return err
 	}
 
-	fullToken := "Bearer " + getUIDResult.Token
-	values = &url.Values{"pubkey": {signTestResult.Public}, "signature": {signTestResult.Signature}}
-	res, err = sendRequest("POST", baseURL+"/login", values, fullToken)
+	token := "Bearer " + getUIDResult.Token
+	values := &url.Values{"pubkey": {publicKey}, "signature": {signature}}
+	res, err = sendRequest("POST", apiBaseURL+"/login", values, token)
 	if err != nil {
 		return err
 	}
@@ -1029,30 +798,27 @@ func postTx(contract string, form *url.Values) error {
 	}
 	jvtToken := "Bearer " + loginResult.Token
 
-	res, err = sendRequest("POST", baseURL+"/prepare/"+contract, form, jvtToken)
+	res, err = sendMultipartRequest(apiBaseURL+"/prepare/"+contract, form, files, jvtToken)
 	if err != nil {
 		return err
 	}
 	var prepareResult prepareResult
 	err = json.Unmarshal(res, &prepareResult)
 	if err != nil {
-		return fmt.Errorf("Can't parse prepare result")
+		return fmt.Errorf("Can't parse prepare result: %s", string(res))
 	}
 
-	values = &url.Values{"forsign": {prepareResult.ForSign}, "private": {privateKey}}
-	res, err = sendRequest("POST", baseURL+"/signtest", values, "")
+	signature, err = sign(privateKey, prepareResult.ForSign)
 	if err != nil {
 		return err
 	}
 
-	err = json.Unmarshal(res, &signTestResult)
-	if err != nil {
-		return fmt.Errorf("Can't parse second signTest result")
+	form = &url.Values{
+		"time":      {prepareResult.Time},
+		"signature": {signature},
 	}
 
-	(*form)["time"] = []string{prepareResult.Time}
-	(*form)["signature"] = []string{signTestResult.Signature}
-	res, err = sendRequest("POST", baseURL+"/contract/"+contract, form, jvtToken)
+	res, err = sendRequest("POST", apiBaseURL+"/contract/"+prepareResult.RequestID, form, jvtToken)
 	if err != nil {
 		return err
 	}
@@ -1061,24 +827,25 @@ func postTx(contract string, form *url.Values) error {
 
 	err = json.Unmarshal(res, &contractResult)
 	if err != nil {
-		return fmt.Errorf("Can't parse contract result")
+		return fmt.Errorf("Can't parse contract result: %s", string(res))
 	}
 
 	var txstatusResult txstatusResult
 	for i := 0; i < 15; i++ {
-		res, err = sendRequest("GET", baseURL+"/txstatus/"+contractResult.Hash, nil, jvtToken)
+		res, err = sendRequest("GET", apiBaseURL+"/txstatus/"+contractResult.Hash, nil, jvtToken)
 		if err != nil {
 			return err
 		}
 
 		err = json.Unmarshal(res, &txstatusResult)
 		if err != nil {
-			fmt.Println("txStatus: ", txstatusResult)
-			return fmt.Errorf("Can't parse txstatus result")
+			return fmt.Errorf("Can't parse txstatus result: %s", string(res))
 		}
 
 		if len(txstatusResult.BlockID) > 0 {
 			break
+		} else if txstatusResult.Message != nil {
+			return fmt.Errorf("%s: %s", txstatusResult.Message.Type, txstatusResult.Message.Error)
 		} else {
 			time.Sleep(time.Second * 5)
 		}
@@ -1144,7 +911,7 @@ func waitSignal() {
 }
 
 func checkPorts(nodesNumber int) error {
-	ports := []int{dbPort, centrifugoPort, serveKeysPort}
+	ports := []int{dbPort, centrifugoPort}
 	for i := 1; i <= nodesNumber; i++ {
 		port := systemPort + (i-1)*2
 		ports = append(ports, port, port+1)
@@ -1176,4 +943,31 @@ func isFreePort(port int) bool {
 	}
 	defer conn.Close()
 	return false
+}
+
+type importParam struct {
+	Data string `json:"Data"`
+}
+
+func getImportParts() ([]importParam, error) {
+	conn, err := dbConn(1)
+	if err != nil {
+		return nil, fmt.Errorf("Can't connect to DB. Error: %s", err)
+	}
+	defer conn.Close()
+
+	var data string
+	if err = conn.QueryRow(`SELECT value FROM "1_buffer_data" WHERE key = 'import'`).Scan(&data); err != nil {
+		return nil, err
+	}
+
+	v := struct {
+		Data []importParam `json:"data"`
+	}{}
+
+	if err = json.Unmarshal([]byte(data), &v); err != nil {
+		return nil, err
+	}
+
+	return v.Data, nil
 }

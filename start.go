@@ -2,10 +2,9 @@ package main
 
 import (
 	"fmt"
-	"time"
 )
 
-func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
+func startNodes(nodesNumber int) {
 	defer killProcesses()
 
 	fmt.Println("Checking ports for availability")
@@ -23,24 +22,8 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	}
 	fmt.Println("OK")
 
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-
 	fmt.Print("Installing a local copy of postgres... ")
 	err = installPostgres()
-	if err != nil {
-		fmt.Println("Error: ", err)
-		return
-	}
-	fmt.Println("OK")
-
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-
-	fmt.Print("Updating postgres config... ")
-	err = changePostgresPort(psqlPort)
 	if err != nil {
 		fmt.Println("Error: ", err)
 		return
@@ -59,10 +42,6 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 		return
 	}
 
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-
 	err = makeDirs(nodesNumber)
 	if err != nil {
 		return
@@ -78,31 +57,11 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 		return
 	}
 
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-
-	server, err := startServingFiles(nodesNumber)
-	if err != nil {
-		fmt.Println("Error: ", err)
-		return
-	}
-	defer server.Close()
-
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-	fmt.Print("Updating the full_nodes parameter... ")
-	err = updateFullNodes(nodesNumber)
-	if err != nil {
-		fmt.Println("Error: ", err)
+	if err = upNodes(nodesNumber); err != nil {
 		return
 	}
 
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-	fmt.Print("Updating keys...")
+	fmt.Print("Updating keys... ")
 	err = updateKeys(nodesNumber)
 	if err != nil {
 		fmt.Println("Error: ", err)
@@ -110,23 +69,21 @@ func startNodes(nodesNumber int, psqlPort int64, slowInstall bool) {
 	}
 	fmt.Println("OK")
 
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-	fmt.Print("Installing demo applications... ")
-	err = installDemoPage()
+	fmt.Print("Updating the full_nodes parameter... ")
+	err = updateFullNodes(nodesNumber)
 	if err != nil {
 		fmt.Println("Error: ", err)
 		return
 	}
+	fmt.Println("OK")
 
-	if slowInstall {
-		time.Sleep(time.Minute * 2)
-	}
-	err = connectNodes(nodesNumber)
+	fmt.Print("Installing demo applications... ")
+	err = installDemoPage()
 	if err != nil {
+		fmt.Println("Error:", err)
 		return
 	}
+	fmt.Println("OK")
 
 	err = startFront(nodesNumber)
 	if err != nil {

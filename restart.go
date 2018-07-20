@@ -23,12 +23,6 @@ func restartNodes() error {
 		return err
 	}
 
-	server, err := startServingFiles(len(files) - 2)
-	if err != nil {
-		return err
-	}
-	defer server.Close()
-
 	fmt.Print("Starting centrifugo... ")
 	err = startCentrifugo()
 	if err != nil {
