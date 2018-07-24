@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,7 +27,7 @@ const (
 
 	waitTablesCount = 32
 	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/60ddda1608e4770aabb8732127ee5c4db3facdc1/quick-start/quick-start.json"
-	maxImportTx     = 20
+	maxImportTx     = 10
 
 	walletBalance = 100
 
@@ -37,6 +36,7 @@ const (
 
 var (
 	executablePath    string
+	dataPath          string
 	centrifugoURL     string
 	centrifugoProcess *os.Process
 	nodeProcesses     []*os.Process
@@ -50,55 +50,37 @@ func init() {
 		fmt.Println("Can't find the current directory: ", err)
 		return
 	}
+	dataPath = filepath.Join(executablePath, "data")
+}
 
-	centrifugoURL = fmt.Sprintf("http://localhost:%d", centrifugoPort)
+func printMenu() {
+	lines := []string{
+		`Type "i" to perform a new installation`,
+		`Type "c" to remove all nodes and databases`,
+	}
+
+	if isInstalled() {
+		lines = append(lines, `Type "r" to restart the previous installation`)
+	}
+
+	lines = append(lines,
+		`Type "s" to stop the services without clearing the data`,
+		`Type "q" to exit.`,
+	)
+
+	for i, line := range lines {
+		fmt.Printf("%d. %s\n", i+1, line)
+	}
+	fmt.Print("> ")
 }
 
 func main() {
 	defer stopNodes()
 	go waitSignal()
 
-	start := flag.Int("start", 0, `The "start = X" command launches X number of nodes. Previous installation data will be deleted.`)
-	stop := flag.Bool("stop", false, "Stops the current session without clearing the data.")
-	restart := flag.Bool("restart", false, "Restarts the previous installation attempt.")
-	clear := flag.Bool("clean", false, "Removes all nodes and databases.")
-	flag.Parse()
-
-	if (*start != 0 && (*stop || *restart || *clear)) ||
-		(*stop && (*start != 0 || *restart || *clear)) ||
-		(*restart && (*start != 0 || *stop || *clear)) ||
-		(*clear && (*start != 0 || *stop || *restart)) {
-		fmt.Println("Only one command can be used at a time.")
-		return
-	}
-
-	if *start != 0 {
-		startNodes(*start)
-		return
-	}
-
-	if *stop {
-		stopNodes()
-		return
-	}
-
-	if *clear {
-		clearNodes()
-		return
-	}
-
-	if *restart {
-		restartNodes()
-		return
-	}
-
 	for {
-		fmt.Println(`1. Type "i" to perform a new installation 
-2. Type "c" to remove all nodes and databases 
-3. Type "r" to restart the previous installation 
-4. Type "s" to stop the services without clearing the data 
-5. Type "q" to exit.`)
-		fmt.Print("> ")
+		printMenu()
+
 		var action string
 		_, err := fmt.Scanf("%s \n", &action)
 		if err != nil {

@@ -24,7 +24,7 @@ func clearNodes() error {
 	}
 
 	fmt.Print("Removing data... ")
-	err = os.RemoveAll(executablePath + `\data`)
+	err = os.RemoveAll(dataPath)
 	if err != nil {
 		fmt.Println(fmt.Errorf("Can't remove files from the data directory. Error: %s", err))
 		return fmt.Errorf("Can't remove files from the data directory. Error: %s", err)

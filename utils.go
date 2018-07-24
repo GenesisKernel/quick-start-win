@@ -695,6 +695,7 @@ func importData(fileURL string) error {
 
 			defer wg.Done()
 			defer func() {
+				fmt.Print(".")
 				<-semCh
 			}()
 
@@ -977,4 +978,14 @@ func getImportParts() ([]importParam, error) {
 	}
 
 	return v.Data, nil
+}
+
+func isInstalled() bool {
+	_, err := os.Stat(dataPath)
+	return err == nil
+}
+
+func installVCRedist() error {
+	c := exec.Command(executablePath + `\vcredist_x64.exe`)
+	return c.Run()
 }
