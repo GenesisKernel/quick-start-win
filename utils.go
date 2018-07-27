@@ -234,6 +234,7 @@ func (a *nodeConfigArgs) Args() []string {
 		fmt.Sprintf(`--dbPassword=%s`, dbPassword),
 		fmt.Sprintf(`--dbName=%s`, a.dbName),
 		fmt.Sprintf(`--firstBlock=%s`, a.firstBlock),
+		fmt.Sprintf(`--runMode=%s`, "PrivateBlockchain"),
 		fmt.Sprintf(`--httpPort=%d`, a.httpPort),
 		fmt.Sprintf(`--tcpPort=%d`, a.tcpPort),
 		fmt.Sprintf(`--nodesAddr=%s`, a.nodesAddr),
@@ -409,6 +410,7 @@ func startFront(nodesCount int) error {
 		args := make([]string, 0)
 		args = append(args,
 			"--dry",
+			fmt.Sprintf(`--socket-url=%s`, centrifugoURL),
 			fmt.Sprintf(`--full-node=%s`, apiURL),
 			fmt.Sprintf(`--private-key=%s`, string(key)))
 
@@ -686,17 +688,13 @@ func importData(fileURL string) error {
 
 	var wg sync.WaitGroup
 	var errCh = make(chan error, len(parts))
-	var semCh = make(chan bool, maxImportTx)
 
 	for _, part := range parts {
 		wg.Add(1)
 		go func(data string) {
-			semCh <- true
-
-			defer wg.Done()
 			defer func() {
+				wg.Done()
 				fmt.Print(".")
-				<-semCh
 			}()
 
 			err := postTx("@1Import", &url.Values{"Data": {data}}, nil)
@@ -983,9 +981,4 @@ func getImportParts() ([]importParam, error) {
 func isInstalled() bool {
 	_, err := os.Stat(dataPath)
 	return err == nil
-}
-
-func installVCRedist() error {
-	c := exec.Command(executablePath + `\vcredist_x64.exe`)
-	return c.Run()
 }

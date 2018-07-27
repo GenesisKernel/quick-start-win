@@ -14,14 +14,6 @@ func startNodes(nodesNumber int) {
 		return
 	}
 
-	fmt.Print("Installing Microsoft Visual C++ Redistributable... ")
-	err = installVCRedist()
-	if err != nil {
-		fmt.Println("Error: ", err)
-		return
-	}
-	fmt.Println("OK")
-
 	fmt.Print("Starting centrifugo... ")
 	err = startCentrifugo()
 	if err != nil {

@@ -27,7 +27,6 @@ const (
 
 	waitTablesCount = 32
 	demoPageURL     = "https://raw.githubusercontent.com/GenesisKernel/apps/60ddda1608e4770aabb8732127ee5c4db3facdc1/quick-start/quick-start.json"
-	maxImportTx     = 10
 
 	walletBalance = 100
 
@@ -51,6 +50,7 @@ func init() {
 		return
 	}
 	dataPath = filepath.Join(executablePath, "data")
+	centrifugoURL = fmt.Sprintf("http://localhost:%d", centrifugoPort)
 }
 
 func printMenu() {
@@ -74,9 +74,25 @@ func printMenu() {
 	fmt.Print("> ")
 }
 
+func printRestartMessage() {
+	if isInstalled() {
+		fmt.Println(`Quickstart already installed. Do you want to start it now? y/n`)
+		fmt.Print("> ")
+		var action string
+		_, err := fmt.Scanf("%s \n", &action)
+		if err != nil {
+			fmt.Println("Error: ", err)
+		} else if action == "y" {
+			restartNodes()
+		}
+	}
+}
+
 func main() {
 	defer stopNodes()
 	go waitSignal()
+
+	printRestartMessage()
 
 	for {
 		printMenu()
